@@ -168,6 +168,7 @@ const ONAIR_LIVE = (() => {
     { match: /^film4\b(?!.*\+1)/i, freeview: 14, virgin: 428, bt: 14, freesat: 300, color: "#991b1b", catchup: "Channel 4" },
     { match: /^really/i, freeview: 17, virgin: 128, bt: 44, freesat: 160, color: "#0d9488", catchup: "discovery+" },
     { match: /^more4/i, freeview: 18, virgin: 147, bt: 18, freesat: 124, color: "#0d9488", catchup: "Channel 4" },
+    { match: /^u&davejavu/i, freeview: 74, virgin: 227, bt: 74, freesat: null, color: "#3f3f46", catchup: "U" },
     { match: /^u&dave/i, freeview: 19, virgin: 127, bt: 19, freesat: 157, color: "#3f3f46", catchup: "U" },
     { match: /^u&drama/i, freeview: 20, virgin: 130, bt: 20, freesat: 158, color: "#9f1239", catchup: "U" },
     { match: /^5 ?usa/i, freeview: 21, virgin: 153, bt: 21, freesat: 129, color: "#1d4ed8", catchup: "My5" },
@@ -193,8 +194,9 @@ const ONAIR_LIVE = (() => {
     { match: /^great! ?christmas/i, freeview: 52, virgin: null, bt: 52, freesat: 303, color: "#b91c1c", catchup: "GREAT! player" },
     { match: /^u&eden/i, freeview: 57, virgin: 245, bt: 57, freesat: 164, color: "#166534", catchup: "U" },
     { match: /^blaze/i, freeview: 64, virgin: 174, bt: 64, freesat: 162, color: "#ea580c", catchup: "BLAZE" },
-    { match: /^true crime\b(?!.*xtra)/i, freeview: 67, virgin: 148, bt: 67, freesat: 143, color: "#991b1b", catchup: "Watch Free UK" },
-    { match: /^true crime xtra/i, freeview: 68, virgin: null, bt: 68, freesat: null, color: "#7f1d1d", catchup: "Watch Free UK" },
+    { match: /^tbn uk/i, freeview: 66, virgin: null, bt: 66, freesat: null, color: "#0284c7", catchup: "Live TV" },
+    { match: /^true crime\b(?!.*x\b|.*xtra)/i, freeview: 67, virgin: 148, bt: 67, freesat: 143, color: "#991b1b", catchup: "Watch Free UK" },
+    { match: /^true crime x/i, freeview: 68, virgin: null, bt: 68, freesat: null, color: "#7f1d1d", catchup: "Watch Free UK" },
     { match: /^legend xtra/i, freeview: 69, virgin: null, bt: 69, freesat: null, color: "#9a3412", catchup: "Watch Free UK" },
     { match: /^rewind tv/i, freeview: 81, virgin: null, bt: 81, freesat: null, color: "#475569", catchup: "Freeview Play" },
     { match: /^talking ?pictures/i, freeview: 82, virgin: 445, bt: 82, freesat: 306, color: "#475569", catchup: "TPTV Encore" },
@@ -220,7 +222,8 @@ const ONAIR_LIVE = (() => {
     { match: /^sky.*select|^sky.*mummy|^sky ?m:i/i, freeview: null, virgin: 402, bt: 502, freesat: null, color: "#7e22ce", catchup: "NOW" },
     { match: /^sky.*hits|^sky.*christmas/i, freeview: null, virgin: 403, bt: 503, freesat: null, color: "#9333ea", catchup: "NOW" },
     { match: /^sky.*greats/i, freeview: null, virgin: 404, bt: 504, freesat: null, color: "#7c3aed", catchup: "NOW" },
-    { match: /^sky.*family|^disney\+ cinema/i, freeview: null, virgin: 406, bt: 506, freesat: null, color: "#2563eb", catchup: "NOW" },
+    { match: /^sky.*family/i, freeview: null, virgin: 406, bt: 506, freesat: null, color: "#2563eb", catchup: "NOW" },
+    { match: /^disney\+? ?cine/i, freeview: null, virgin: 405, bt: null, freesat: null, color: "#1d4ed8", catchup: "Disney+" },
     { match: /^sky.*action/i, freeview: null, virgin: 407, bt: 507, freesat: null, color: "#b91c1c", catchup: "NOW" },
     { match: /^sky.*comedy/i, skyMin: 300, freeview: null, virgin: 408, bt: 508, freesat: null, color: "#d97706", catchup: "NOW" },
     { match: /^sky.*thriller/i, freeview: null, virgin: 409, bt: 509, freesat: null, color: "#334155", catchup: "NOW" },
@@ -242,7 +245,11 @@ const ONAIR_LIVE = (() => {
     { match: /^sky ?sp(?:orts)? ?nfl/i, freeview: null, virgin: 510, bt: 426, freesat: null, color: "#1e293b", catchup: "NOW" },
     { match: /^sky ?sp(?:orts)? ?racing/i, freeview: null, virgin: 511, bt: 428, freesat: null, color: "#78350f", catchup: "NOW" },
     { match: /^sky ?sp(?:orts)? ?mix/i, freeview: null, virgin: 512, bt: 429, freesat: null, color: "#0284c7", catchup: "NOW" },
+    { match: /^skyspboxoff/i, freeview: null, virgin: null, bt: null, freesat: null, color: "#1e3a8a", catchup: "NOW" },
     { match: /^sky ?sp/i, freeview: null, virgin: 502, bt: 420, freesat: null, color: "#1e3a8a", catchup: "NOW" },
+    { match: /^colors ?cineplex/i, freeview: null, virgin: null, bt: 397, freesat: null, color: "#7c3aed", catchup: "Live TV" },
+    { match: /^s4c/i, freeview: 4, virgin: 166, bt: null, freesat: 104, color: "#dc2626", catchup: "BBC iPlayer" },
+    { match: /^bbc ?scotland/i, freeview: 9, virgin: 108, bt: null, freesat: 106, color: "#1d4ed8", catchup: "BBC iPlayer" },
     { match: /^bbc news/i, freeview: 231, virgin: 601, bt: 231, freesat: 200, color: "#dc2626", catchup: "BBC iPlayer" },
     { match: /^bbc parl/i, freeview: 232, virgin: 605, bt: 232, freesat: 201, color: "#334155", catchup: "BBC iPlayer" },
     { match: /^sky news/i, freeview: 233, virgin: 603, bt: 233, freesat: 202, color: "#b91c1c", catchup: "YouTube" },
@@ -384,7 +391,7 @@ const ONAIR_LIVE = (() => {
   // 1. Fetch Live Full UK Channel Lineup from Sky EPG API (with multi-tier backup)
   async function fetchLiveChannels(force = false) {
     const cache = loadCache();
-    if (!force && cache.channels && cache.channels.ver === 3 && Date.now() - cache.channels.ts < CHANNELS_TTL_MS) {
+    if (!force && cache.channels && cache.channels.ver === 4 && Date.now() - cache.channels.ts < CHANNELS_TTL_MS) {
       return cache.channels.list;
     }
 
@@ -435,7 +442,7 @@ const ONAIR_LIVE = (() => {
       });
 
       if (channels.length > 0) {
-        cache.channels = { ts: Date.now(), ver: 3, list: channels };
+        cache.channels = { ts: Date.now(), ver: 4, list: channels };
         saveCache(cache);
         return channels;
       }
