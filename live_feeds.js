@@ -14,7 +14,7 @@ const ONAIR_LIVE = (() => {
   const STREAMING_TTL_MS = 12 * 60 * 60 * 1000; // 12h for streaming drops
   const RSS_TTL_MS = 2 * 60 * 60 * 1000;        // 2h for news/RSS feeds
   const VAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days for reusable show metadata & links
-  const STORAGE_KEY = "onair_live_epg_v6";
+  const STORAGE_KEY = "onair_live_epg_v7";
   const VAULT_STORAGE_KEY = "onair_show_vault_v1";
   const inFlightRequests = new Map();
   const hostBackoffUntil = new Map();
@@ -327,7 +327,7 @@ const ONAIR_LIVE = (() => {
   function loadCache() {
     try {
       // Remove superseded EPG cache versions so they don't waste localStorage quota
-      ["onair_live_epg_v3", "onair_live_epg_v4", "onair_live_epg_v5"].forEach((oldKey) => {
+      ["onair_live_epg_v3", "onair_live_epg_v4", "onair_live_epg_v5", "onair_live_epg_v6"].forEach((oldKey) => {
         if (localStorage.getItem(oldKey) !== null) localStorage.removeItem(oldKey);
       });
       return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -1393,13 +1393,14 @@ const ONAIR_LIVE = (() => {
       }
     }
 
+    // Prefer any live/cached schedules, or fall back to today's full-day snapshot
+    const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
+    const snapSchedules = snap && snap.dateStr === dateStr && snap.plutoSchedules ? snap.plutoSchedules : {};
     if (!rawList) {
       if (cached && Array.isArray(cached.channels) && cached.channels.length) {
-        return { channels: cached.channels, schedules: cached.schedules || {} };
+        return { channels: cached.channels, schedules: cached.schedules || snapSchedules };
       }
       const seedPluto = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.pluto) || [];
-      const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
-      const snapSchedules = snap && snap.dateStr === dateStr && snap.plutoSchedules ? snap.plutoSchedules : {};
       return { channels: mapSeedChannels(seedPluto, "pluto"), schedules: snapSchedules };
     }
 
