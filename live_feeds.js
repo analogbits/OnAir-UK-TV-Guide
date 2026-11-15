@@ -632,6 +632,17 @@ const ONAIR_LIVE = (() => {
                   ? `Episode ${ev.episodenumber}`
                   : genre;
 
+              const isRepeat = /\(R\)|\brepeat\b/i.test(ev.sy || "") || /\(R\)|\brepeat\b/i.test(rawTitle);
+              const tvmazeKeys = Object.keys(tvmazeMap || {});
+              const isTvMazeNew = Boolean(
+                !isRepeat &&
+                  titleKey &&
+                  (tvmazeMap[titleKey] ||
+                    tvmazeKeys.some(
+                      (k) => k.length >= 7 && (titleKey.endsWith(" " + k) || titleKey.startsWith(k + " "))
+                    ))
+              );
+
               return {
                 id: `skyev-${ev.eid || `${sid}-${ev.st}`}`,
                 channelId: `sky-${sid}`,
@@ -644,10 +655,10 @@ const ONAIR_LIVE = (() => {
                 desc: ev.sy || "Live UK television broadcast.",
                 cast: genre,
                 stars: null,
-                isNew: Boolean(ev.new),
-                isRepeat: /\(R\)|\brepeat\b/i.test(ev.sy || "") || /\(R\)|\brepeat\b/i.test(rawTitle),
+                isNew: Boolean(ev.new) || isTvMazeNew,
+                isRepeat,
                 isLiveData: true,
-                thisWeek: Boolean(ev.new),
+                thisWeek: Boolean(ev.new) || isTvMazeNew,
                 interests: inferInterestsFromEvent(rawTitle, ev.sy || "", genre),
                 startMin: clampedStart,
                 endMin: clampedEnd
