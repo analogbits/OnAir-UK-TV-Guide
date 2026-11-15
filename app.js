@@ -28,6 +28,7 @@
     streamSort: "rating",
     searchQuery: "",
     searchFilter: "all",
+    searchPlatformOnly: false,
     favorites: new Set(JSON.parse(localStorage.getItem("onair_favorites") || "[]")),
     watchlist: JSON.parse(localStorage.getItem("onair_watchlist") || "[]"),
     reminders: new Set(JSON.parse(localStorage.getItem("onair_reminders") || "[]")),
@@ -1148,34 +1149,63 @@
     return null;
   }
 
-  function searchAcrossDays(query) {
+  function scoreTextMatch(title, hay, q, tokens) {
+    const t = (title || "").toLowerCase();
+    const h = (hay || "").toLowerCase();
+    if (!q || !tokens.length) return 0;
+    if (!tokens.every((tok) => h.includes(tok))) return 0;
+    if (t === q) return 100;
+    if (t.startsWith(q)) return 85;
+    if (t.includes(q)) return 70;
+    if (tokens.every((tok) => t.includes(tok))) return 55;
+    if (h.includes(q)) return 40;
+    return 25;
+  }
+
+  function searchAcrossDays(query, platformOnly = state.searchPlatformOnly) {
     const q = query.trim().toLowerCase();
+    const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
+    const activeTokens = tokens.length ? tokens : [q];
     const nowMin = getNowMinutes();
     const localCache = getCachedStoreForSearch();
-    const streamMatches = getMergedCatalogue().filter(
-      (s) =>
-        s.title.toLowerCase().includes(q) ||
-        s.desc.toLowerCase().includes(q) ||
-        s.platform.toLowerCase().includes(q) ||
-        s.genre.toLowerCase().includes(q) ||
-        s.cast.toLowerCase().includes(q)
-    );
+
+    const streamMatches = getMergedCatalogue()
+      .map((s) => {
+        const hay = `${s.title} ${s.desc} ${s.platform} ${s.genre} ${s.cast}`;
+        const score = scoreTextMatch(s.title, hay, q, activeTokens);
+        return score > 0 ? { item: s, score } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.item);
+
+    const platformChannels = getFilteredChannels("All");
+    const orderedChannels = platformOnly
+      ? platformChannels
+      : [...platformChannels, ...liveChannels.filter((c) => c.numbers[state.platform] == null)];
+
+    const channelMatches = orderedChannels
+      .map((ch) => {
+        const hay = `${ch.name} ${ch.short || ""} ${ch.category || ""} ${ch.catchup || ""}`;
+        const score = scoreTextMatch(ch.name, hay, q, activeTokens);
+        return score > 0 ? { channel: ch, score } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map((x) => x.channel);
 
     const tvMatches = [];
     const seenTv = new Set();
-    // Prioritize active platform channels first, then other channels
-    const orderedChannels = [
-      ...getFilteredChannels("All"),
-      ...liveChannels.filter((c) => c.numbers[state.platform] == null)
-    ];
 
     for (let dayOffset = -7; dayOffset <= 6; dayOffset++) {
       orderedChannels.forEach((ch) => {
         const progs = getDayScheduleForSearch(ch, dayOffset, localCache);
         if (!progs) return;
         progs.forEach((p) => {
-          const hay = `${p.title || ""} ${p.desc || ""} ${p.genre || ""} ${p.cast || ""} ${ch.name || ""}`.toLowerCase();
-          if (!hay.includes(q)) return;
+          const hay = `${p.title || ""} ${p.desc || ""} ${p.genre || ""} ${p.cast || ""} ${ch.name || ""}`;
+          const score = scoreTextMatch(p.title, hay, q, activeTokens);
+          if (score <= 0) return;
           const dedupKey = `${ch.id}-${dayOffset}-${p.startMin}-${p.title}`;
           if (seenTv.has(dedupKey)) return;
           seenTv.add(dedupKey);
@@ -1192,7 +1222,7 @@
                 ? `⏭️ On Next: ${dayLabel} ${formatTime(p.startMin)}`
                 : `⏮️ Aired: ${dayLabel} ${formatTime(p.startMin)}`;
 
-          tvMatches.push({ prog: p, channel: ch, dayOffset, status, whenLabel });
+          tvMatches.push({ prog: p, channel: ch, dayOffset, status, whenLabel, score });
         });
       });
     }
@@ -1200,11 +1230,12 @@
     const statusRank = { live: 0, upcoming: 1, past: 2 };
     tvMatches.sort((a, b) => {
       if (statusRank[a.status] !== statusRank[b.status]) return statusRank[a.status] - statusRank[b.status];
+      if (b.score !== a.score && Math.abs(b.score - a.score) >= 20) return b.score - a.score;
       if (a.status === "past") return b.dayOffset - a.dayOffset || b.prog.startMin - a.prog.startMin;
       return a.dayOffset - b.dayOffset || a.prog.startMin - b.prog.startMin;
     });
 
-    return { tvMatches, streamMatches };
+    return { tvMatches, streamMatches, channelMatches };
   }
 
   const tvmazeSearchCache = new Map();
@@ -1317,7 +1348,7 @@
     el.searchResultsSection.classList.remove("hidden");
     el.mainContent.classList.add("hidden");
 
-    const { tvMatches, streamMatches } = searchAcrossDays(query);
+    const { tvMatches, streamMatches, channelMatches } = searchAcrossDays(query);
     const liveAndUpcoming = tvMatches.filter((m) => m.status === "live" || m.status === "upcoming");
     const pastMatches = tvMatches.filter((m) => m.status === "past");
 
@@ -1326,7 +1357,7 @@
       ? ` · Next: ${nextBroadcast.channel.name} (${getDayLabelShort(nextBroadcast.dayOffset)} ${formatTime(nextBroadcast.prog.startMin)})`
       : "";
 
-    el.searchSummary.textContent = `Found ${liveAndUpcoming.length} live/upcoming, ${pastMatches.length} past broadcasts (-7d..+6d) and ${streamMatches.length} streaming titles for "${query}"${nextSummary}`;
+    el.searchSummary.textContent = `Found ${channelMatches.length} channels, ${liveAndUpcoming.length} live/upcoming, ${pastMatches.length} past broadcasts (-7d..+6d) and ${streamMatches.length} streaming titles for "${query}"${nextSummary}`;
 
     const filterBar = document.getElementById("searchFilterBar");
     if (filterBar) {
@@ -1344,13 +1375,29 @@
         })
         .join("");
 
+      const channelStrip = channelMatches.length
+        ? `<div style="display:flex; gap:6px; flex-wrap:wrap; width:100%; align-items:center; margin-top:4px;">` +
+          `<span style="font-size:12px; color:var(--text-muted); font-weight:600;">Channels:</span>` +
+          channelMatches
+            .map((c) => {
+              const num = c.numbers[state.platform];
+              return `<button class="chip-pill" type="button" data-jump-ch="${c.id}" data-jump-day="0" data-jump-min="${getNowMinutes()}">${c.name}${num != null ? ` (${num})` : ""}</button>`;
+            })
+            .join("") +
+          `</div>`
+        : "";
+
+      const platName = (PLATFORMS.find((p) => p.id === state.platform) || { name: state.platform }).name;
+
       filterBar.innerHTML =
         `<div style="display:flex; gap:8px; flex-wrap:wrap; width:100%; align-items:center;">` +
         tabs
           .map((t) => `<button class="chip-pill ${state.searchFilter === t.id ? "active" : ""}" data-search-filter="${t.id}" type="button">${t.label}</button>`)
           .join("") +
+        `<button id="searchPlatScopeBtn" class="chip-pill ${state.searchPlatformOnly ? "active" : ""}" type="button">${state.searchPlatformOnly ? `${platName} Only` : "All Platforms"}</button>` +
         `<button id="syncUpcomingSearchBtn" class="chip-pill" type="button" title="Fetch upcoming days (+1 to +6) if not cached yet">🔄 Sync Upcoming Days</button>` +
         `</div>` +
+        channelStrip +
         `<div style="display:flex; gap:6px; flex-wrap:wrap; width:100%; align-items:center; margin-top:4px;">` +
         `<span style="font-size:12px; color:var(--text-muted); font-weight:600;">Search UK On-Demand:</span>${onDemandPills}` +
         `</div>`;
@@ -1361,6 +1408,20 @@
           runSearch(el.searchInput.value || query);
         });
       });
+
+      filterBar.querySelectorAll("[data-jump-ch]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          jumpToGuideMatch(btn.dataset.jumpCh, Number(btn.dataset.jumpDay), Number(btn.dataset.jumpMin));
+        });
+      });
+
+      const scopeBtn = document.getElementById("searchPlatScopeBtn");
+      if (scopeBtn) {
+        scopeBtn.onclick = () => {
+          state.searchPlatformOnly = !state.searchPlatformOnly;
+          runSearch(el.searchInput.value || query);
+        };
+      }
 
       const syncBtn = document.getElementById("syncUpcomingSearchBtn");
       if (syncBtn) {
@@ -2740,6 +2801,9 @@
     const input = document.getElementById("chatInput");
     if (!fab || !panel || !messagesEl || !form || !input) return;
 
+    let lastTopic = null;
+    let lastMatches = null;
+
     function addMsg(role, text, actions = []) {
       const div = document.createElement("div");
       div.className = `chat-msg ${role}`;
@@ -2761,11 +2825,115 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    function handleQuery(raw) {
+    function getLiveSummaryFor(platId, catId, dayOffset = 0, limit = 3) {
+      const nowMin = getNowMinutes();
+      const localCache = getCachedStoreForSearch();
+      const chs = liveChannels.filter((c) => c.numbers[platId] != null);
+      const picks = [];
+      for (const ch of chs) {
+        const progs = getDayScheduleForSearch(ch, dayOffset, localCache);
+        if (!progs) continue;
+        const target = dayOffset === 0
+          ? progs.find((p) => nowMin >= p.startMin && nowMin < p.endMin) || progs.find((p) => p.startMin > nowMin)
+          : progs.find((p) => p.startMin >= 18 * 60) || progs[0];
+        if (!target) continue;
+        if (catId && catId !== "All" && !progMatchesCategory(target, catId, ch.name)) continue;
+        picks.push({ ch, prog: target });
+        if (picks.length >= limit) break;
+      }
+      return picks;
+    }
+
+    async function handleQuery(raw) {
       const q = raw.trim();
       if (!q) return;
       addMsg("user", escapeHtml(q));
       const lower = q.toLowerCase();
+
+      // Help command
+      if (/^(help|\?|what can you do|commands)$/i.test(lower)) {
+        addMsg(
+          "bot",
+          "Here's what I can do:<br/>" +
+          "&bull; <strong>When is [show] on next?</strong> (searches -7d to +6d + streaming + TVMaze)<br/>" +
+          "&bull; <strong>Open [Platform/View]</strong> (Sky, Freeview, Pluto TV, Tubi, What to Watch, Settings)<br/>" +
+          "&bull; <strong>What's on [Sport/Christmas/Film] tonight?</strong> (lists live picks &amp; filters)<br/>" +
+          "&bull; <strong>Theme &amp; Data:</strong> <em>\"Dark mode\"</em>, <em>\"Low data mode\"</em>, <em>\"Surprise me\"</em>, <em>\"My watchlist\"</em>"
+        );
+        return;
+      }
+
+      // Theme / Low-Data / Watchlist commands
+      if (/\b(dark mode|night mode|dark theme)\b/i.test(lower)) {
+        state.theme = "dark";
+        applyTheme();
+        addMsg("bot", "Switched to <strong>Dark Mode</strong>.");
+        return;
+      }
+      if (/\b(light mode|day mode|light theme)\b/i.test(lower)) {
+        state.theme = "light";
+        applyTheme();
+        addMsg("bot", "Switched to <strong>Light Mode</strong>.");
+        return;
+      }
+      if (/\b(low data|data saver|save data)\b/i.test(lower)) {
+        state.lowDataMode = !/\boff|disable\b/i.test(lower);
+        localStorage.setItem("onair_low_data", state.lowDataMode ? "1" : "0");
+        scheduleAutoRefresh();
+        addMsg("bot", `Low-Data Mode is now <strong>${state.lowDataMode ? "Enabled (2h cache, no background polling)" : "Disabled"}</strong>.`, [
+          { label: "Open Settings", onClick: () => switchView("settings") }
+        ]);
+        return;
+      }
+      if (/\b(my watchlist|open watchlist|show watchlist)\b/i.test(lower)) {
+        renderWatchlist();
+        if (el.watchlistDrawer) el.watchlistDrawer.classList.remove("hidden");
+        addMsg("bot", `Opened your Watchlist (${state.watchlist.length} saved item${state.watchlist.length === 1 ? "" : "s"}).`);
+        return;
+      }
+      if (/\b(surprise me|pick something|random pick)\b/i.test(lower)) {
+        const cat = getMergedCatalogue().filter((s) => Number(s.rating || 0) >= 4.2);
+        const pick = cat[Math.floor(Math.random() * cat.length)] || getMergedCatalogue()[0];
+        if (pick) {
+          lastTopic = pick.title;
+          addMsg("bot", `How about <strong>${escapeHtml(pick.title)}</strong> (${escapeHtml(pick.platform)} · ${escapeHtml(pick.genre)})?<br/>${escapeHtml((pick.desc || "").slice(0, 120))}...`, [
+            { label: "Open Details", onClick: () => openStreamModal(pick.id) },
+            { label: "+ Watchlist", onClick: () => { toggleWatchlist({ id: pick.id, title: pick.title, meta: pick.platform }); renderWatchlist(); showToast("Watchlist updated"); } }
+          ]);
+          return;
+        }
+      }
+
+      // Follow-up commands using conversational memory
+      if (lastMatches && /\b(add to watchlist|save it|save this|bookmark)\b/i.test(lower)) {
+        const first = (lastMatches.tvMatches && lastMatches.tvMatches[0]) || null;
+        const firstStream = (lastMatches.streamMatches && lastMatches.streamMatches[0]) || null;
+        if (first) {
+          toggleWatchlist({ id: first.prog.id, title: first.prog.title, meta: first.channel.name });
+          renderWatchlist();
+          addMsg("bot", `Added <strong>${escapeHtml(first.prog.title)}</strong> to your Watchlist.`);
+          return;
+        }
+        if (firstStream) {
+          toggleWatchlist({ id: firstStream.id, title: firstStream.title, meta: firstStream.platform });
+          renderWatchlist();
+          addMsg("bot", `Added <strong>${escapeHtml(firstStream.title)}</strong> to your Watchlist.`);
+          return;
+        }
+      }
+      if (lastTopic && /\b(yesterday|last week|past|earlier)\b/i.test(lower) && lastTopic.length >= 2) {
+        const res = searchAcrossDays(lastTopic, false);
+        const past = res.tvMatches.filter((m) => m.status === "past").slice(0, 3);
+        if (past.length) {
+          addMsg(
+            "bot",
+            `Recent airings of <strong>${escapeHtml(lastTopic)}</strong>:<br/>` +
+            past.map((p) => `&bull; ${p.whenLabel} on <strong>${escapeHtml(p.channel.name)}</strong>`).join("<br/>"),
+            [{ label: `Jump to ${past[0].channel.name}`, onClick: () => jumpToGuideMatch(past[0].channel.id, past[0].dayOffset, past[0].prog.startMin) }]
+          );
+          return;
+        }
+      }
 
       // 1. Detect platform intent
       const platMap = [
@@ -2800,7 +2968,7 @@
       else if (/\b(now & next|now and next|on now)\b/i.test(lower)) matchedView = { id: "now-next", label: "Now & Next" };
       else if (/\b(streaming|on demand|netflix|disney|prime)\b/i.test(lower)) matchedView = { id: "streaming", label: "Streaming" };
       else if (/\b(what'?s new|headlines|rss)\b/i.test(lower)) matchedView = { id: "whats-new", label: "What's New" };
-      else if (/\b(settings|backup|vault|low data|cache|diagnostics)\b/i.test(lower)) matchedView = { id: "settings", label: "Settings" };
+      else if (/\b(settings|backup|vault|cache|diagnostics|health)\b/i.test(lower)) matchedView = { id: "settings", label: "Settings" };
 
       // 4. Detect day/time jump
       let dayJump = null;
@@ -2816,8 +2984,8 @@
 
       // 5. Check if it's a show/when-on-next lookup
       const stripped = q
-        .replace(/^(when is|when'?s|what time is|where can i watch|search for|search|find|look up|is)\s+/i, "")
-        .replace(/\s+(on next|next on|on tv|playing|showing|tonight|today|tomorrow|\?)+$/gi, "")
+        .replace(/^(when is|when'?s|what time is|where can i watch|search for|search|find|look up|is|watch)\s+/i, "")
+        .replace(/\s+(on next|next on|on tv|playing|showing|tonight|today|tomorrow|on netflix|on iplayer|\?)+$/gi, "")
         .trim();
 
       const isExplicitNav =
@@ -2827,17 +2995,20 @@
         (Boolean(matchedCat) && stripped.split(/\s+/).length <= 3 && !/when|where|next/i.test(lower));
 
       if (!isExplicitNav && stripped.length >= 2) {
-        const { tvMatches, streamMatches } = searchAcrossDays(stripped);
+        const res = searchAcrossDays(stripped, false);
+        lastTopic = stripped;
+        lastMatches = res;
+        const { tvMatches, streamMatches } = res;
         if (tvMatches.length || streamMatches.length) {
           const nextOnes = tvMatches.filter((m) => m.status === "live" || m.status === "upcoming");
           const pastOnes = tvMatches.filter((m) => m.status === "past");
           const lines = [];
           if (nextOnes.length) {
-            const top = nextOnes[0];
             lines.push(
-              `<strong>${escapeHtml(top.prog.title)}</strong><br/>` +
-              `${top.whenLabel} on <strong>${escapeHtml(top.channel.name)}</strong>` +
-              (nextOnes.length > 1 ? `<br/><span style="color:var(--text-muted)">+${nextOnes.length - 1} more upcoming airing(s)</span>` : "")
+              nextOnes
+                .slice(0, 3)
+                .map((m) => `<strong>${escapeHtml(m.prog.title)}</strong> &bull; ${m.whenLabel} on <strong>${escapeHtml(m.channel.name)}</strong>`)
+                .join("<br/>")
             );
           } else if (pastOnes.length) {
             const last = pastOnes[0];
@@ -2858,6 +3029,12 @@
               label: `Jump to ${primary.channel.name}`,
               onClick: () => jumpToGuideMatch(primary.channel.id, primary.dayOffset, primary.prog.startMin)
             });
+            if (primary.status === "live") {
+              const liveUrl = getLiveStreamUrl(primary.channel);
+              if (liveUrl) {
+                actions.push({ label: "Watch Live ↗", onClick: () => window.open(liveUrl, "_blank", "noopener") });
+              }
+            }
           }
           actions.push({
             label: "Open All Search Results",
@@ -2867,6 +3044,24 @@
             }
           });
           addMsg("bot", lines.join("<br/><br/>"), actions);
+          return;
+        }
+
+        // Fallback to TVMaze + UK On-Demand links directly in chat!
+        const dirItems = await fetchLiveShowDirectoryMatches(stripped);
+        if (dirItems.length) {
+          const d0 = dirItems[0];
+          const enc = encodeURIComponent(d0.title);
+          addMsg(
+            "bot",
+            `<strong>${escapeHtml(d0.title)}</strong> isn't in this week's live TV schedule, so check UK On-Demand:<br/>` +
+            `<span style="color:var(--text-muted)">${escapeHtml(d0.genre)} &bull; ${escapeHtml(d0.platform)}</span>`,
+            [
+              { label: "Netflix ↗", onClick: () => window.open(`https://www.netflix.com/search?q=${enc}`, "_blank", "noopener") },
+              { label: "Channel 4 ↗", onClick: () => window.open(`https://www.channel4.com/search?q=${enc}`, "_blank", "noopener") },
+              { label: "Open Details", onClick: () => openStreamModal(d0.id) }
+            ]
+          );
           return;
         }
       }
@@ -2901,14 +3096,22 @@
         if (dayJump !== null) parts.push(getDayLabelShort(dayJump));
         if (matchedView) parts.push(matchedView.label);
         else parts.push("TV Guide");
-        addMsg("bot", `Moved you to <strong>${escapeHtml(parts.join(" · "))}</strong>.`);
+
+        const preview = targetView === "epg"
+          ? getLiveSummaryFor(state.platform, state.epgCategory, state.dayOffset, 3)
+          : [];
+        const previewHtml = preview.length
+          ? `<br/><br/>` + preview.map((x) => `&bull; <strong>${escapeHtml(x.ch.name)}</strong>: ${escapeHtml(x.prog.title)} (${formatTime(x.prog.startMin)})`).join("<br/>")
+          : "";
+
+        addMsg("bot", `Moved you to <strong>${escapeHtml(parts.join(" · "))}</strong>.${previewHtml}`);
         return;
       }
 
       // Fallback: run global search across ahead & back days
       el.searchInput.value = stripped || q;
       runSearch(stripped || q);
-      addMsg("bot", `I opened Search Results across all cached days (-7d to +6d) and streaming for <strong>"${escapeHtml(stripped || q)}"</strong>.`);
+      addMsg("bot", `Opened full Search across -7d..+6d, Show Vault &amp; UK On-Demand for <strong>"${escapeHtml(stripped || q)}"</strong>.`);
     }
 
     function escapeHtml(s) {
