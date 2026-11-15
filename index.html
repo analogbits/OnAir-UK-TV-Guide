@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OnAir UK — TV Guide, Streaming &amp; What to Watch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Top Editorial Header -->
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="brand-group">
+          <div class="brand-mark" aria-hidden="true">OA</div>
+          <div class="brand-text">
+            <span class="brand-title">OnAir UK</span>
+            <span class="brand-subtitle">TV Guide &amp; Streaming</span>
+          </div>
+        </div>
+
+        <nav class="primary-nav" aria-label="Primary sections">
+          <button class="nav-tab is-active" data-view="epg" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+              <line x1="3" y1="10" x2="21" y2="10"></line>
+              <line x1="9" y1="4" x2="9" y2="20"></line>
+            </svg>
+            TV Guide
+          </button>
+          <button class="nav-tab" data-view="now-next" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9"></circle>
+              <polyline points="12 7 12 12 15 14"></polyline>
+            </svg>
+            Now &amp; Next
+          </button>
+          <button class="nav-tab" data-view="what-to-watch" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+            What to Watch
+          </button>
+          <button class="nav-tab" data-view="streaming" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Streaming
+          </button>
+          <button class="nav-tab" data-view="live-feeds" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 11a9 9 0 0 1 9 9"></path>
+              <path d="M4 4a16 16 0 0 1 16 16"></path>
+              <circle cx="5" cy="19" r="1"></circle>
+            </svg>
+            What's New
+          </button>
+          <button class="nav-tab" data-view="settings" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            Settings
+          </button>
+        </nav>
+
+        <div class="header-actions">
+          <button id="liveRefreshBtn" class="live-sync-pill" type="button" title="Refresh live TV schedules and streaming feeds">
+            <span id="liveStatusDot" class="live-dot"></span>
+            <span id="liveStatusText">Syncing...</span>
+            <svg class="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+          </button>
+
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              id="globalSearch"
+              type="search"
+              placeholder="Search shows, films, channels..."
+              aria-label="Search programmes and streaming titles"
+            />
+            <button id="clearSearchBtn" class="clear-search hidden" type="button" aria-label="Clear search">&times;</button>
+          </div>
+
+          <button id="watchlistBtn" class="icon-pill-btn" type="button" aria-label="Open Watchlist">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="btn-label">Watchlist</span>
+            <span id="watchlistCount" class="count-badge">0</span>
+          </button>
+
+          <button id="themeToggleBtn" class="icon-btn" type="button" aria-label="Cycle theme (System, Light, Dark)" title="Theme: Match System (Auto)">
+            <svg id="themeIconSun" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg id="themeIconMoon" class="icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <svg id="themeIconSystem" class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="8" cy="8" r="3.5"></circle>
+              <line x1="8" y1="1.5" x2="8" y2="2.5"></line>
+              <line x1="8" y1="13.5" x2="8" y2="14.5"></line>
+              <line x1="1.5" y1="8" x2="2.5" y2="8"></line>
+              <line x1="13.5" y1="8" x2="14.5" y2="8"></line>
+              <line x1="3.4" y1="3.4" x2="4.2" y2="4.2"></line>
+              <line x1="11.8" y1="11.8" x2="12.6" y2="12.6"></line>
+              <line x1="19" y1="5" x2="5" y2="19"></line>
+              <path d="M20.5 15.8A5.2 5.2 0 0 1 13.8 20a5.2 5.2 0 0 0 4.8-7.2 5.2 5.2 0 0 1 1.9 3z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Search Results Banner -->
+    <section id="searchResultsSection" class="search-results-section hidden" aria-live="polite">
+      <div class="container">
+        <div class="section-header-row">
+          <div>
+            <h2 class="section-title">Search Results</h2>
+            <p id="searchSummary" class="section-subtitle"></p>
+          </div>
+          <button id="closeSearchResults" class="ghost-btn" type="button">Back to Guide</button>
+        </div>
+        <div id="searchResultsGrid" class="cards-grid"></div>
+      </div>
+    </section>
+
+    <!-- Main Content Area -->
+    <main id="mainContent" class="main-content">
+      <!-- VIEW 1: TV GUIDE (EPG) -->
+      <section id="view-epg" class="view-panel is-active">
+        <div class="controls-bar">
+          <div class="controls-inner">
+            <div class="control-group">
+              <label class="control-label">TV Platform</label>
+              <div class="platform-pills" id="platformPills" role="group" aria-label="Select TV Provider"></div>
+            </div>
+
+            <div class="control-group category-group">
+              <label class="control-label">On Now</label>
+              <div class="filter-pills" id="epgCategoryPills" role="group" aria-label="Filter by what is on now"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-toolbar">
+          <div class="timeline-toolbar-inner">
+            <div class="date-strip" id="dateStrip" role="tablist" aria-label="Select day"></div>
+
+            <div class="time-jumps">
+              <button class="jump-btn jump-now" data-jump="now" type="button">
+                <span class="live-dot"></span> Now
+              </button>
+              <button class="jump-btn" data-jump="9" type="button">Morning</button>
+              <button class="jump-btn" data-jump="14" type="button">Afternoon</button>
+              <button class="jump-btn" data-jump="20" type="button">Primetime</button>
+              <button class="jump-btn" data-jump="22.5" type="button">Late</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="epg-wrapper">
+          <div id="epgScrollContainer" class="epg-scroll-container" tabindex="0" aria-label="TV Guide Grid">
+            <div id="epgGrid" class="epg-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: NOW & NEXT -->
+      <section id="view-now-next" class="view-panel">
+        <div class="container">
+          <div class="section-header-row">
+            <div>
+              <h1 class="editorial-heading">On TV Now &amp; Next</h1>
+              <p class="section-subtitle">
+                Live schedule for <strong id="nowNextPlatformLabel">Freeview</strong> &bull;
+                Updated <span id="nowNextClock"></span>
+              </p>
+            </div>
+            <div class="now-next-controls">
+              <div class="platform-pills compact" id="nowNextPlatformPills"></div>
+            </div>
+          </div>
+
+          <div class="filter-pills spaced" id="nowNextCategoryPills"></div>
+          <div id="nowNextGrid" class="now-next-grid"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: WHAT TO WATCH -->
+      <section id="view-what-to-watch" class="view-panel">
+        <div class="container">
+          <!-- Section A: What to Watch This Week -->
+          <div class="section-header-row">
+            <div>
+              <h1 class="editorial-heading">What to Watch This Week</h1>
+              <p class="section-subtitle">Top shows, films, premieres &amp; live events across UK TV and streaming</p>
+            </div>
+            <div class="filter-pills" id="wtwWeekFilterPills">
+              <button class="pill-btn is-active" data-wtw-week="All" type="button">All Highlights</button>
+              <button class="pill-btn" data-wtw-week="TV" type="button">TV Broadcasts</button>
+              <button class="pill-btn" data-wtw-week="Streaming" type="button">Streaming</button>
+              <button class="pill-btn" data-wtw-week="Films" type="button">Films</button>
+            </div>
+          </div>
+
+          <div id="wtwThisWeekGrid" class="cards-grid" style="margin-bottom: 42px;"></div>
+
+          <!-- Section B: What You Might Be Interested In -->
+          <div class="interest-picker-card">
+            <div class="section-header-row" style="margin-bottom: 12px;">
+              <div>
+                <h2 class="editorial-heading" style="font-size: 24px;">What You Might Be Interested In</h2>
+                <p class="section-subtitle">Select your tastes below to tailor recommendations across live TV, catch-up &amp; streaming</p>
+              </div>
+              <button id="clearInterestsBtn" class="ghost-btn" type="button">Reset Interests</button>
+            </div>
+            <div id="interestPills" class="filter-pills"></div>
+            <div class="filter-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); justify-content: space-between;">
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <span class="filter-row-label">Format</span>
+                <div class="filter-pills" id="wtwModeFilterPills">
+                  <button class="pill-btn is-active" data-wtw-mode="All" type="button">All (Live, Catch-Up &amp; Streaming)</button>
+                  <button class="pill-btn" data-wtw-mode="Live" type="button">Live TV</button>
+                  <button class="pill-btn" data-wtw-mode="CatchUp" type="button">Catch-Up (iPlayer, ITVX, C4, 5)</button>
+                  <button class="pill-btn" data-wtw-mode="Streaming" type="button">Streaming Platforms</button>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <span class="filter-row-label">Min Rating</span>
+                <div class="filter-pills" id="wtwStarFilterPills">
+                  <button class="pill-btn is-active" data-wtw-stars="0" type="button">Any</button>
+                  <button class="pill-btn" data-wtw-stars="3" type="button">3&#9733;+</button>
+                  <button class="pill-btn" data-wtw-stars="4" type="button">4&#9733;+</button>
+                  <button class="pill-btn" data-wtw-stars="5" type="button">5&#9733; Only</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="wtwInterestedGrid" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: STREAMING & ON-DEMAND FINDER -->
+      <section id="view-streaming" class="view-panel">
+        <div class="container">
+          <div id="streamingHero" class="streaming-hero"></div>
+
+          <div class="streaming-filters-card">
+            <div class="filter-row">
+              <span class="filter-row-label">Platform</span>
+              <div class="filter-pills" id="streamPlatformPills"></div>
+            </div>
+            <div class="filter-row">
+              <span class="filter-row-label">Type</span>
+              <div class="filter-pills" id="streamTypePills"></div>
+            </div>
+            <div class="filter-row">
+              <span class="filter-row-label">Genre</span>
+              <div class="filter-pills" id="streamGenrePills"></div>
+            </div>
+            <div class="filter-row">
+              <span class="filter-row-label">Released</span>
+              <div class="filter-pills" id="streamWindowPills"></div>
+            </div>
+            <div class="filter-row space-between">
+              <div class="filter-results-meta">
+                Showing <strong id="streamCountLabel">0</strong> recommendations
+              </div>
+              <div class="sort-control">
+                <label for="streamSortSelect">Sort by</label>
+                <select id="streamSortSelect">
+                  <option value="rating">Critic Rating</option>
+                  <option value="year">Newest First</option>
+                  <option value="title">Title (A–Z)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div id="streamingGrid" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: WHAT'S NEW & LIVE FEEDS -->
+      <section id="view-live-feeds" class="view-panel">
+        <div class="container">
+          <div class="section-header-row">
+            <div>
+              <h1 class="editorial-heading">What's New &amp; Live UK Feeds</h1>
+              <p class="section-subtitle">
+                Auto-refreshing every 15 minutes from TVMaze UK, What's on Netflix UK &amp; Guardian TV
+              </p>
+            </div>
+            <button id="feedsRefreshBtn" class="btn-primary" type="button">Refresh All Feeds Now</button>
+          </div>
+
+          <div class="guide-directory-card">
+            <div class="guide-dir-header">
+              <span class="control-label">Official UK TV Guide Sources</span>
+              <span class="section-subtitle">Direct links to live UK broadcaster &amp; platform guides</span>
+            </div>
+            <div class="guide-links-row">
+              <a class="guide-ext-link" href="https://www.freeview.co.uk/tv-guide" target="_blank" rel="noopener">Freeview TV Guide &nearr;</a>
+              <a class="guide-ext-link" href="https://www.tvguide.co.uk/" target="_blank" rel="noopener">TVGuide.co.uk &nearr;</a>
+              <a class="guide-ext-link" href="https://tvguide.dpope.uk/" target="_blank" rel="noopener">dpope.uk Freeview Search &nearr;</a>
+              <a class="guide-ext-link" href="https://www.freely.co.uk/tv-guide" target="_blank" rel="noopener">Freely TV Guide &nearr;</a>
+              <a class="guide-ext-link" href="https://www.freesat.co.uk/tv-guide" target="_blank" rel="noopener">Freesat TV Guide &nearr;</a>
+              <a class="guide-ext-link" href="https://www.whattowatch.com/uk-tv-guide" target="_blank" rel="noopener">WhatToWatch UK &nearr;</a>
+              <a class="guide-ext-link" href="https://www.whats-on-netflix.com/whats-new/uk/" target="_blank" rel="noopener">What's on Netflix UK &nearr;</a>
+            </div>
+          </div>
+
+          <div class="filter-pills spaced" id="feedSourcePills"></div>
+
+          <div id="unifiedFeedGrid" class="cards-grid"></div>
+        </div>
+      </section>
+
+      <!-- VIEW 6: Settings & Data Storage -->
+      <section id="view-settings" class="view-panel">
+        <div class="container">
+          <div class="section-header-row">
+            <div>
+              <h1 class="section-title">Settings &amp; Data Storage</h1>
+              <p class="section-subtitle">Manage your display preferences, live EPG refresh rate, folder vault (<code>vault_data.js</code>), and browser storage.</p>
+            </div>
+          </div>
+
+          <div id="settingsContainer" class="settings-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- First-Time Setup Wizard Modal -->
+    <div id="onboardingModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+      <div class="modal-card onboard-card">
+        <div id="onboardingBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- Programme / Streaming Detail Modal -->
+    <div id="detailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-card">
+        <button id="closeModalBtn" class="modal-close" type="button" aria-label="Close details">&times;</button>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- Watchlist Slide-Over Drawer -->
+    <aside id="watchlistDrawer" class="drawer-backdrop hidden" aria-label="My Watchlist">
+      <div class="drawer-panel">
+        <div class="drawer-header">
+          <div>
+            <h2>My Watchlist</h2>
+            <p class="drawer-subtitle">Saved shows, films &amp; reminders</p>
+          </div>
+          <button id="closeDrawerBtn" class="modal-close" type="button" aria-label="Close watchlist">&times;</button>
+        </div>
+        <div id="watchlistItems" class="drawer-body"></div>
+      </div>
+    </aside>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="vault_data.js"></script>
+  <script src="live_feeds.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+name: Update OnAir UK Show Vault
+
+on:
+  schedule:
+    - cron: "15 6 * * *" # Daily at 06:15 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-vault:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Update vault_data.js
+        run: python3 update_vault.py
+
+      - name: Commit updated vault_data.js if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add vault_data.js
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update OnAir UK show & streaming vault"
+            git push
+          else
+            echo "No vault changes to commit."
+          fi
