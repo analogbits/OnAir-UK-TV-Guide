@@ -7,12 +7,15 @@ Then open: http://localhost:8765
 
 import http.server
 import socketserver
+import time
 import urllib.parse
 import urllib.request
 import urllib.error
 import os
 
 PORT = int(os.environ.get("PORT", 8765))
+PROXY_CACHE_TTL = 30 * 60  # 30 minutes to minimize external data calls
+_proxy_cache = {}
 ALLOWED_HOSTS = {
     "api.pluto.tv",
     "tubitv.com",
@@ -38,6 +41,16 @@ class OnAirHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(b'{"error":"Host not allowed"}')
                 return
 
+            cached = _proxy_cache.get(target)
+            if cached and time.time() - cached[0] < PROXY_CACHE_TTL:
+                self.send_response(200)
+                self.send_header("Content-Type", cached[1])
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "public, max-age=1800")
+                self.end_headers()
+                self.wfile.write(cached[2])
+                return
+
             req = urllib.request.Request(
                 target,
                 headers={
@@ -49,10 +62,12 @@ class OnAirHandler(http.server.SimpleHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     body = resp.read()
                     ctype = resp.headers.get("Content-Type", "application/octet-stream")
+                    if resp.status == 200 and len(body) < 6 * 1024 * 1024:
+                        _proxy_cache[target] = (time.time(), ctype, body)
                     self.send_response(resp.status)
                     self.send_header("Content-Type", ctype)
                     self.send_header("Access-Control-Allow-Origin", "*")
-                    self.send_header("Cache-Control", "public, max-age=120")
+                    self.send_header("Cache-Control", "public, max-age=1800")
                     self.end_headers()
                     self.wfile.write(body)
             except urllib.error.HTTPError as err:
