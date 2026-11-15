@@ -31,7 +31,8 @@
     watchlist: JSON.parse(localStorage.getItem("onair_watchlist") || "[]"),
     reminders: new Set(JSON.parse(localStorage.getItem("onair_reminders") || "[]")),
     theme: localStorage.getItem("onair_theme") || "system",
-    refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 15)
+    refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 15),
+    seasonOverride: localStorage.getItem("onair_season_override") || "auto"
   };
 
   // Live Data Stores (100% Live EPG, Zero Fake Schedules)
@@ -224,77 +225,91 @@
     return Array.from(byNum.values()).sort((a, b) => Number(a.numbers[state.platform]) - Number(b.numbers[state.platform]));
   }
 
-  function getActiveSeason(date = new Date()) {
-    const m = date.getMonth() + 1;
-    const d = date.getDate();
-    if ((m === 11 && d >= 10) || m === 12) {
-      return {
-        id: "christmas",
-        chip: "🎄 Christmas",
-        title: "🎄 Christmas & Festive — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for November–December: festive films, specials & dedicated Christmas channels",
-        regex: /christmas|xmas|santa|elf|nativity|festive|scrooge|grinch|snowman|carol|mistletoe|miracle on 34th|holiday|winter wonderland/i,
-        searchQuery: "christmas"
-      };
-    }
-    if (m === 1) {
-      return {
-        id: "winter",
-        chip: "❄️ Winter",
-        title: "❄️ New Year & Winter — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for January: winter specials, cosy dramas & cold-weather docs",
-        regex: /new year|winter|snow|ice|arctic|frozen|alpine|cosy/i,
-        searchQuery: "winter"
-      };
-    }
-    if (m === 2 && d <= 18) {
-      return {
-        id: "valentines",
-        chip: "💘 Romance",
-        title: "💘 Valentine's & Romance — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for February: romantic films, dramas & love stories",
-        regex: /valentine|romance|romantic|love|wedding|heart|romcom|romeo/i,
-        searchQuery: "romance"
-      };
-    }
-    if ((m === 3) || (m === 4 && d <= 20)) {
-      return {
-        id: "easter",
-        chip: "🐣 Spring & Easter",
-        title: "🐣 Spring & Easter — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for Spring: Easter family films, nature & gardening specials",
-        regex: /easter|spring|garden|nature|bunny|rabbit|chocolate|blossom|lamb/i,
-        searchQuery: "easter"
-      };
-    }
-    if (m >= 5 && m <= 8) {
-      return {
-        id: "summer",
-        chip: "☀️ Summer",
-        title: "☀️ Summer & Festivals — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for Summer: live festivals, summer sport, travel & sunshine films",
-        regex: /summer|beach|sun|holiday|festival|glastonbury|wimbledon|island|surf|olympic/i,
-        searchQuery: "summer"
-      };
-    }
-    if (m === 10 && d >= 16 || (m === 11 && d < 10)) {
-      return {
-        id: "halloween",
-        chip: "🎃 Halloween",
-        title: "🎃 Halloween & Spooky — Live on UK TV & Free Streaming",
-        subtitle: "Auto-updated for Spooky Season: horror, ghost stories, supernatural & thrillers",
-        regex: /halloween|spooky|horror|ghost|haunted|witch|vampire|zombie|nightmare|terror|scream|october/i,
-        searchQuery: "halloween"
-      };
-    }
-    return {
+  const SEASON_CALENDAR = [
+    {
+      id: "christmas",
+      chip: "🎄 Christmas",
+      windowLabel: "Nov 10 – Dec 31",
+      title: "🎄 Christmas & Festive — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for November–December: festive films, specials & dedicated Christmas channels",
+      regex: /\b(christmas|xmas|santa(\s+claus)?|father\s+christmas|elf|nativity|festive|scrooge|grinch|snowman|christmas\s+carol|carols|carol\s+(service|singing|concert)|mistletoe|miracle\s+on\s+34th|winter\s+wonderland|nutcracker|advent|pantomime|panto|jingle|reindeer|north\s+pole|home\s+alone|polar\s+express|yuletide|tinsel|stocking|holiday\s+(inn|special|romance|movie|film|heist|magic))\b/i,
+      searchQuery: "christmas",
+      matchesDate: (m, d) => (m === 11 && d >= 10) || m === 12
+    },
+    {
+      id: "winter",
+      chip: "❄️ Winter",
+      windowLabel: "Jan 1 – Feb 10",
+      title: "❄️ New Year & Winter — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for January–early February: winter specials, cosy dramas & cold-weather docs",
+      regex: /\b(new\s+year|hogmanay|winter|snow(fall|storm|y)?|arctic|frozen|alpine|blizzard|skiing|ice\s+(age|rink|skating|hotel|road|breaker|world)|polar|antarctic|cosy)\b/i,
+      searchQuery: "winter",
+      matchesDate: (m, d) => m === 1 || (m === 2 && d <= 10)
+    },
+    {
+      id: "valentines",
+      chip: "💘 Romance",
+      windowLabel: "Feb 11 – Feb 18",
+      title: "💘 Valentine's & Romance — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for Valentine's week: romantic films, dramas & love stories",
+      regex: /\b(valentine('?s)?|romance|romantic|love\s+story|falling\s+in\s+love|romcom|rom-com|romeo|juliet|cupid|soulmate|first\s+dates|married\s+at\s+first\s+sight|wedding)\b/i,
+      searchQuery: "romance",
+      matchesDate: (m, d) => m === 2 && d >= 11 && d <= 18
+    },
+    {
+      id: "easter",
+      chip: "🐣 Spring & Easter",
+      windowLabel: "Feb 19 – Apr 30",
+      title: "🐣 Spring & Easter — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for Spring: Easter family films, nature & gardening specials",
+      regex: /\b(easter|springtime|spring\s+(watch|special|awakening|clean)|springwatch|passover|good\s+friday|bunny|chocolate\s+egg|blossom|lambing|daffodil|gardener'?s?\s+world)\b/i,
+      searchQuery: "easter",
+      matchesDate: (m, d) => (m === 2 && d >= 19) || m === 3 || m === 4
+    },
+    {
+      id: "summer",
+      chip: "☀️ Summer",
+      windowLabel: "May 1 – Aug 31",
+      title: "☀️ Summer & Festivals — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for Summer: live festivals, summer sport, travel & sunshine films",
+      regex: /\b(summer|heatwave|glastonbury|wimbledon|proms|bbc\s+proms|festival|beach|sunshine|seaside|coastal|island|olympics?|eurovision|tour\s+de\s+france|ashes|cricket|bbq|barbecue)\b/i,
+      searchQuery: "summer",
+      matchesDate: (m) => m >= 5 && m <= 8
+    },
+    {
       id: "autumn",
       chip: "🍂 Autumn",
+      windowLabel: "Sep 1 – Oct 15",
       title: "🍂 Autumn & Cosy Nights — Live on UK TV & Free Streaming",
       subtitle: "Auto-updated for Autumn: mystery dramas, bake-offs, nature & cosy evenings",
-      regex: /autumn|harvest|bake off|strictly|mystery|cosy|murder/i,
-      searchQuery: "mystery"
-    };
+      regex: /\b(autumn|autumnwatch|harvest|bake\s+off|strictly\s+come\s+dancing|cosy|murder\s+mystery|whodunnit|agatha\s+christie|detective|bonfire)\b/i,
+      searchQuery: "mystery",
+      matchesDate: (m, d) => m === 9 || (m === 10 && d <= 15)
+    },
+    {
+      id: "halloween",
+      chip: "🎃 Halloween",
+      windowLabel: "Oct 16 – Nov 9",
+      title: "🎃 Halloween & Spooky — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for Spooky Season: horror, ghost stories, supernatural & thrillers",
+      regex: /\b(halloween|spooky|horror|ghost(s|ly)?|haunted|witches|witchcraft|vampire|zombie|nightmare|terror|frankenstein|dracula|exorcist|paranormal|supernatural|occult|pumpkin|bonfire\s+night|guy\s+fawkes)\b/i,
+      searchQuery: "halloween",
+      matchesDate: (m, d) => (m === 10 && d >= 16) || (m === 11 && d < 10)
+    }
+  ];
+
+  function getAutoSeason(date = new Date()) {
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    return SEASON_CALENDAR.find((s) => s.matchesDate(m, d)) || SEASON_CALENDAR[5];
+  }
+
+  function getActiveSeason(date = new Date()) {
+    if (state.seasonOverride && state.seasonOverride !== "auto") {
+      const custom = SEASON_CALENDAR.find((s) => s.id === state.seasonOverride);
+      if (custom) return { ...custom, isOverride: true };
+    }
+    return { ...getAutoSeason(date), isOverride: false };
   }
 
   function progMatchesCategory(prog, category, chName = "") {
@@ -741,18 +756,32 @@
         .filter((s) => season.regex.test(`${s.title || ""} ${s.desc || ""} ${s.genre || ""}`))
         .map((s) => ({ kind: "stream", item: s }));
 
+      const autoSeason = getAutoSeason();
+      const seasonBadge = season.isOverride
+        ? `Previewing ${season.chip} (${season.windowLabel})`
+        : `Auto · ${season.windowLabel}`;
+      const seasonSwitchPills = [
+        `<button class="chip-pill ${state.seasonOverride === "auto" ? "active" : ""}" data-season-pick="auto" type="button">🔄 Auto (${autoSeason.chip})</button>`,
+        ...SEASON_CALENDAR.map(
+          (s) => `<button class="chip-pill ${state.seasonOverride === s.id ? "active" : ""}" data-season-pick="${s.id}" type="button">${s.chip}</button>`
+        )
+      ].join("");
+
       const seasonalCards = [...liveSeasonal.slice(0, 6), ...streamSeasonal.slice(0, 3)].slice(0, 6);
       seasonalEl.innerHTML = `
         <div class="interest-picker-card" style="margin-bottom:28px;">
-          <div class="section-header-row" style="margin-bottom:14px;">
+          <div class="section-header-row" style="margin-bottom:10px;">
             <div>
               <h2 class="editorial-heading" style="font-size:22px;">${season.title}</h2>
-              <p class="section-subtitle">${season.subtitle}</p>
+              <p class="section-subtitle">${season.subtitle} <span class="badge badge-now" style="margin-left:6px;">${seasonBadge}</span></p>
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <a class="watch-alt-pill" href="https://pluto.tv/gb_ie/search/?q=${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Pluto TV (${season.chip}) &nearr;</a>
               <a class="watch-alt-pill" href="https://tubitv.com/search/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Tubi Free (${season.chip}) &nearr;</a>
             </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+            ${seasonSwitchPills}
           </div>
           ${
             seasonalCards.length
@@ -763,6 +792,15 @@
           }
         </div>
       `;
+      seasonalEl.querySelectorAll("[data-season-pick]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.seasonOverride = btn.dataset.seasonPick || "auto";
+          localStorage.setItem("onair_season_override", state.seasonOverride);
+          renderCategoryPills();
+          renderWhatToWatch();
+          if (state.view === "epg") renderEPG(false);
+        });
+      });
     }
 
     // 1. What to Watch This Week
@@ -2245,8 +2283,14 @@
     // Live-update ONLY TV schedule, What's On, and recommendations per user setting
     scheduleAutoRefresh();
 
-    // Every 1 min: keep NOW line, LIVE tags, What's On & recommendations current in real time
+    // Every 1 min: keep NOW line, LIVE tags, Seasonal chip, What's On & recommendations current in real time
+    let lastSeasonId = getActiveSeason().id;
     setInterval(() => {
+      const currentSeasonId = getActiveSeason().id;
+      if (currentSeasonId !== lastSeasonId) {
+        lastSeasonId = currentSeasonId;
+        renderCategoryPills();
+      }
       if (state.view === "epg" && state.dayOffset === 0) renderEPG(false);
       else if (state.view === "now-next") renderNowNext(false);
       else if (state.view === "what-to-watch") renderWhatToWatch();
