@@ -1405,7 +1405,7 @@
       filterBar.querySelectorAll("[data-search-filter]").forEach((btn) => {
         btn.addEventListener("click", () => {
           state.searchFilter = btn.dataset.searchFilter || "all";
-          runSearch(el.searchInput.value || query);
+          runSearch(el.globalSearch.value || query);
         });
       });
 
@@ -1419,7 +1419,7 @@
       if (scopeBtn) {
         scopeBtn.onclick = () => {
           state.searchPlatformOnly = !state.searchPlatformOnly;
-          runSearch(el.searchInput.value || query);
+          runSearch(el.globalSearch.value || query);
         };
       }
 
@@ -1432,7 +1432,7 @@
           for (let d = 1; d <= 6; d++) {
             await ensureSchedulesForChannels(active, d, false);
           }
-          runSearch(el.searchInput.value || query);
+          runSearch(el.globalSearch.value || query);
           showToast("Upcoming 6 days synced for search");
         };
       }
@@ -3036,10 +3036,16 @@
               }
             }
           }
+          if (!primary && streamMatches.length) {
+            actions.push({
+              label: "Open Details & Watch Links",
+              onClick: () => openStreamModal(streamMatches[0].id)
+            });
+          }
           actions.push({
             label: "Open All Search Results",
             onClick: () => {
-              el.searchInput.value = stripped;
+              el.globalSearch.value = stripped;
               runSearch(stripped);
             }
           });
@@ -3109,7 +3115,7 @@
       }
 
       // Fallback: run global search across ahead & back days
-      el.searchInput.value = stripped || q;
+      el.globalSearch.value = stripped || q;
       runSearch(stripped || q);
       addMsg("bot", `Opened full Search across -7d..+6d, Show Vault &amp; UK On-Demand for <strong>"${escapeHtml(stripped || q)}"</strong>.`);
     }
