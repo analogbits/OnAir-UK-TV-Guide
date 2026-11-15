@@ -1227,8 +1227,149 @@ const ONAIR_LIVE = (() => {
     }
   }
 
+  function mapPlutoCategory(plutoCat, name) {
+    const t = `${plutoCat || ""} ${name || ""}`.toLowerCase();
+    if (/movie|film|cinema|western|thriller|sci-fi|horror|christmas/i.test(t)) return "Film";
+    if (/kid|cartoon|nick|anime|teen/i.test(t)) return "Kids";
+    if (/news|weather/i.test(t)) return "News";
+    if (/sport|poker|wrestling|mma|motorsport|nfl|golf/i.test(t)) return "Sport";
+    if (/doc|history|science|nature|mythbuster|crime|mystery/i.test(t)) return "Documentary";
+    if (/music|mtv|vevo|concert/i.test(t)) return "Music";
+    if (/drama|soap|classic tv/i.test(t)) return "Drama";
+    return "Entertainment";
+  }
+
+  async function fetchPlutoTvData(dayOffset = 0, force = false) {
+    const dateStr = getSkyDateString(dayOffset);
+    const cache = loadCache();
+    const cached = cache[`pluto_${dateStr}`];
+    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels)) {
+      return { channels: cached.channels, schedules: cached.schedules || {} };
+    }
+
+    const dayStart = new Date();
+    dayStart.setHours(6, 0, 0, 0);
+    dayStart.setDate(dayStart.getDate() + dayOffset);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setHours(23, 59, 59, 0);
+
+    const midnight = new Date(dayStart);
+    midnight.setHours(0, 0, 0, 0);
+    const midnightMs = midnight.getTime();
+
+    const targetUrl = `https://api.pluto.tv/v2/channels?start=${encodeURIComponent(dayStart.toISOString())}&stop=${encodeURIComponent(dayEnd.toISOString())}`;
+    let rawList = null;
+    for (const url of [
+      targetUrl,
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+    ]) {
+      try {
+        const res = await fetchJson(url);
+        if (Array.isArray(res) && res.length > 0) {
+          rawList = res;
+          break;
+        }
+      } catch {
+        // Try next proxy
+      }
+    }
+
+    if (!rawList) {
+      if (cached && Array.isArray(cached.channels)) {
+        return { channels: cached.channels, schedules: cached.schedules || {} };
+      }
+      return { channels: [], schedules: {} };
+    }
+
+    const channels = [];
+    const schedules = {};
+    let autoNum = 1000;
+
+    rawList.forEach((ch) => {
+      if (!ch || !ch._id || !ch.name) return;
+      const chId = `pluto-${ch._id}`;
+      const num = ch.number && Number(ch.number) > 0 ? Number(ch.number) : autoNum++;
+      const category = mapPlutoCategory(ch.category, ch.name);
+      const colorMap = {
+        Film: "#6b21a8",
+        Kids: "#ea580c",
+        News: "#dc2626",
+        Sport: "#15803d",
+        Documentary: "#0f766e",
+        Music: "#db2777",
+        Drama: "#881337",
+        Entertainment: "#111827"
+      };
+
+      channels.push({
+        id: chId,
+        sid: ch._id,
+        plutoSlug: ch.slug || ch._id,
+        name: ch.name,
+        short: makeShortCode(ch.name),
+        color: colorMap[category] || "#111827",
+        category,
+        hd: true,
+        catchup: "Pluto TV",
+        numbers: {
+          pluto: num,
+          freeview: null,
+          sky: null,
+          virgin: null,
+          bt: null,
+          freesat: null
+        }
+      });
+
+      const events = (ch.timelines || [])
+        .map((tl, idx) => {
+          const stMs = Date.parse(tl.start);
+          const enMs = Date.parse(tl.stop);
+          if (Number.isNaN(stMs) || Number.isNaN(enMs)) return null;
+          const startMin = Math.floor((stMs - midnightMs) / 60000);
+          const endMin = Math.floor((enMs - midnightMs) / 60000);
+          if (endMin <= 360 || startMin >= 24 * 60) return null;
+          const clampedStart = Math.max(360, startMin);
+          const clampedEnd = Math.min(24 * 60, endMin);
+          if (clampedEnd <= clampedStart) return null;
+
+          const epObj = tl.episode || {};
+          const genre = mapPlutoCategory(epObj.genre || ch.category, tl.title);
+          const actors = epObj.clip && Array.isArray(epObj.clip.actors) && epObj.clip.actors.length
+            ? epObj.clip.actors.slice(0, 4).join(", ")
+            : genre;
+
+          return {
+            id: `pluto-${ch._id}-${tl._id || idx}`,
+            title: tl.title || "Untitled",
+            desc: epObj.description || `${ch.name} live free streaming on Pluto TV UK.`,
+            genre,
+            ep: epObj.season && epObj.number ? `Series ${epObj.season}, Ep ${epObj.number}` : genre,
+            rating: epObj.rating || "12",
+            cast: actors,
+            stars: null,
+            isNew: false,
+            isLiveData: true,
+            thisWeek: false,
+            interests: inferInterestsFromEvent(tl.title || "", epObj.description || "", genre),
+            startMin: clampedStart,
+            endMin: clampedEnd
+          };
+        })
+        .filter(Boolean);
+
+      schedules[chId] = events;
+    });
+
+    cache[`pluto_${dateStr}`] = { ts: Date.now(), channels, schedules };
+    saveCache(cache);
+    return { channels, schedules };
+  }
+
   return {
     fetchLiveChannels,
+    fetchPlutoTvData,
     fetchSkySchedulesForSids,
     fetchLiveStreaming,
     fetchRssFeeds,

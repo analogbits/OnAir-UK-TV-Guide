@@ -55,8 +55,30 @@
   }
 
   async function ensureSchedulesForChannels(channels, dayOffset, force = false) {
+    if (state.platform === "pluto" && ONAIR_LIVE.fetchPlutoTvData) {
+      const hasPlutoForDay = liveChannels.some((c) => c.plutoSlug) && !force && liveEpgByDay.get(dayOffset) && liveChannels.some((c) => c.plutoSlug && liveEpgByDay.get(dayOffset)[c.sid]);
+      if (!hasPlutoForDay) {
+        const pluto = await ONAIR_LIVE.fetchPlutoTvData(dayOffset, force).catch(() => ({ channels: [], schedules: {} }));
+        if (pluto.channels && pluto.channels.length) {
+          const existingIds = new Set(liveChannels.map((c) => c.id));
+          const newPluto = pluto.channels.filter((c) => !existingIds.has(c.id));
+          if (newPluto.length) liveChannels = [...liveChannels, ...newPluto];
+          const currentMap = liveEpgByDay.get(dayOffset) || {};
+          pluto.channels.forEach((c) => {
+            if (pluto.schedules[c.id]) currentMap[c.sid] = pluto.schedules[c.id];
+          });
+          liveEpgByDay.set(dayOffset, currentMap);
+          if (state.view === "epg") renderEPG(false);
+          else if (state.view === "now-next") renderNowNext(false);
+          else if (state.view === "what-to-watch") renderWhatToWatch();
+          return;
+        }
+      }
+    }
+
     const dayMap = liveEpgByDay.get(dayOffset) || {};
     const missingSids = channels
+      .filter((c) => !c.plutoSlug)
       .map((c) => c.sid)
       .filter((sid) => sid && (force || !dayMap[sid]));
 
@@ -181,8 +203,85 @@
     return Array.from(byNum.values()).sort((a, b) => Number(a.numbers[state.platform]) - Number(b.numbers[state.platform]));
   }
 
-  function progMatchesCategory(prog, category) {
+  function getActiveSeason(date = new Date()) {
+    const m = date.getMonth() + 1;
+    const d = date.getDate();
+    if ((m === 11 && d >= 10) || m === 12) {
+      return {
+        id: "christmas",
+        chip: "🎄 Christmas",
+        title: "🎄 Christmas & Festive — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for November–December: festive films, specials & dedicated Christmas channels",
+        regex: /christmas|xmas|santa|elf|nativity|festive|scrooge|grinch|snowman|carol|mistletoe|miracle on 34th|holiday|winter wonderland/i,
+        searchQuery: "christmas"
+      };
+    }
+    if (m === 1) {
+      return {
+        id: "winter",
+        chip: "❄️ Winter",
+        title: "❄️ New Year & Winter — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for January: winter specials, cosy dramas & cold-weather docs",
+        regex: /new year|winter|snow|ice|arctic|frozen|alpine|cosy/i,
+        searchQuery: "winter"
+      };
+    }
+    if (m === 2 && d <= 18) {
+      return {
+        id: "valentines",
+        chip: "💘 Romance",
+        title: "💘 Valentine's & Romance — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for February: romantic films, dramas & love stories",
+        regex: /valentine|romance|romantic|love|wedding|heart|romcom|romeo/i,
+        searchQuery: "romance"
+      };
+    }
+    if ((m === 3) || (m === 4 && d <= 20)) {
+      return {
+        id: "easter",
+        chip: "🐣 Spring & Easter",
+        title: "🐣 Spring & Easter — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for Spring: Easter family films, nature & gardening specials",
+        regex: /easter|spring|garden|nature|bunny|rabbit|chocolate|blossom|lamb/i,
+        searchQuery: "easter"
+      };
+    }
+    if (m >= 5 && m <= 8) {
+      return {
+        id: "summer",
+        chip: "☀️ Summer",
+        title: "☀️ Summer & Festivals — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for Summer: live festivals, summer sport, travel & sunshine films",
+        regex: /summer|beach|sun|holiday|festival|glastonbury|wimbledon|island|surf|olympic/i,
+        searchQuery: "summer"
+      };
+    }
+    if (m === 10 && d >= 16 || (m === 11 && d < 10)) {
+      return {
+        id: "halloween",
+        chip: "🎃 Halloween",
+        title: "🎃 Halloween & Spooky — Live on UK TV & Free Streaming",
+        subtitle: "Auto-updated for Spooky Season: horror, ghost stories, supernatural & thrillers",
+        regex: /halloween|spooky|horror|ghost|haunted|witch|vampire|zombie|nightmare|terror|scream|october/i,
+        searchQuery: "halloween"
+      };
+    }
+    return {
+      id: "autumn",
+      chip: "🍂 Autumn",
+      title: "🍂 Autumn & Cosy Nights — Live on UK TV & Free Streaming",
+      subtitle: "Auto-updated for Autumn: mystery dramas, bake-offs, nature & cosy evenings",
+      regex: /autumn|harvest|bake off|strictly|mystery|cosy|murder/i,
+      searchQuery: "mystery"
+    };
+  }
+
+  function progMatchesCategory(prog, category, chName = "") {
     if (!prog) return false;
+    if (category === "Seasonal") {
+      const season = getActiveSeason();
+      return season.regex.test(`${prog.title || ""} ${prog.desc || ""} ${chName || ""}`);
+    }
     if (prog.genre === category) return true;
     if (category === "Entertainment" && prog.genre === "Comedy") return true;
     if (category === "Film" && /^film:/i.test(prog.title || "")) return true;
@@ -196,15 +295,26 @@
     if (category === "Radio") {
       return platformChannels.filter((ch) => ch.category === "Radio");
     }
+    if (category === "Seasonal") {
+      const season = getActiveSeason();
+      return platformChannels.filter((ch) => {
+        if (season.regex.test(ch.name || "")) return true;
+        const progs = getSchedule(ch.id, dayOffset);
+        if (!progs || !progs.length) return false;
+        const current = progs.find((p) => nowMin >= p.startMin && nowMin < p.endMin) || progs[0];
+        if (dayOffset === 0) return progMatchesCategory(current, "Seasonal", ch.name);
+        return progs.some((p) => progMatchesCategory(p, "Seasonal", ch.name));
+      });
+    }
     return platformChannels.filter((ch) => {
       const progs = getSchedule(ch.id, dayOffset);
       if (progs === null) return ch.category === category;
       if (!progs.length) return ch.category === category;
       const current = progs.find((p) => nowMin >= p.startMin && nowMin < p.endMin) || progs[0];
       if (dayOffset === 0) {
-        return progMatchesCategory(current, category);
+        return progMatchesCategory(current, category, ch.name);
       }
-      return progMatchesCategory(current, category) || progs.some((p) => progMatchesCategory(p, category));
+      return progMatchesCategory(current, category, ch.name) || progs.some((p) => progMatchesCategory(p, category, ch.name));
     });
   }
 
@@ -286,15 +396,23 @@
   }
 
   function renderCategoryPills() {
-    el.epgCategoryPills.innerHTML = CHANNEL_CATEGORIES.map(
-      (cat) =>
-        `<button class="pill-btn ${state.epgCategory === cat ? "is-active" : ""}" data-cat="${cat}" type="button">${cat === "Favorites" ? "★ Favorites" : cat}</button>`
-    ).join("");
+    const season = getActiveSeason();
+    const cats = [...CHANNEL_CATEGORIES.slice(0, 2), { id: "Seasonal", label: season.chip }, ...CHANNEL_CATEGORIES.slice(2)];
+    el.epgCategoryPills.innerHTML = cats
+      .map((item) => {
+        const id = typeof item === "string" ? item : item.id;
+        const label = typeof item === "string" ? (item === "Favorites" ? "★ Favorites" : item) : item.label;
+        return `<button class="pill-btn ${state.epgCategory === id ? "is-active" : ""}" data-cat="${id}" type="button">${label}</button>`;
+      })
+      .join("");
 
-    el.nowNextCategoryPills.innerHTML = CHANNEL_CATEGORIES.map(
-      (cat) =>
-        `<button class="pill-btn ${state.nowNextCategory === cat ? "is-active" : ""}" data-nncat="${cat}" type="button">${cat === "Favorites" ? "★ Favorites" : cat}</button>`
-    ).join("");
+    el.nowNextCategoryPills.innerHTML = cats
+      .map((item) => {
+        const id = typeof item === "string" ? item : item.id;
+        const label = typeof item === "string" ? (item === "Favorites" ? "★ Favorites" : item) : item.label;
+        return `<button class="pill-btn ${state.nowNextCategory === id ? "is-active" : ""}" data-nncat="${id}" type="button">${label}</button>`;
+      })
+      .join("");
   }
 
   function renderDateStrip() {
@@ -579,6 +697,53 @@
     const catalogue = getMergedCatalogue();
     const tvPicks = collectTvHighlights();
 
+    // 0. Live Seasonal Spotlight (auto-updates by time of year)
+    const seasonalEl = document.getElementById("wtwSeasonalSpotlight");
+    if (seasonalEl) {
+      const season = getActiveSeason();
+      const nowMin = getNowMinutes();
+      const liveSeasonal = [];
+      const seenSeasonal = new Set();
+      liveChannels.forEach((ch) => {
+        const progs = getSchedule(ch.id, 0) || [];
+        progs.forEach((p) => {
+          if (p.endMin <= nowMin) return;
+          if (!season.regex.test(`${p.title || ""} ${p.desc || ""} ${ch.name || ""}`)) return;
+          if (seenSeasonal.has(p.title)) return;
+          seenSeasonal.add(p.title);
+          liveSeasonal.push({ kind: "tv", prog: p, channel: ch, isOnNow: nowMin >= p.startMin && nowMin < p.endMin });
+        });
+      });
+      liveSeasonal.sort((a, b) => Number(b.isOnNow) - Number(a.isOnNow) || a.prog.startMin - b.prog.startMin);
+
+      const streamSeasonal = catalogue
+        .filter((s) => season.regex.test(`${s.title || ""} ${s.desc || ""} ${s.genre || ""}`))
+        .map((s) => ({ kind: "stream", item: s }));
+
+      const seasonalCards = [...liveSeasonal.slice(0, 6), ...streamSeasonal.slice(0, 3)].slice(0, 6);
+      seasonalEl.innerHTML = `
+        <div class="interest-picker-card" style="margin-bottom:28px;">
+          <div class="section-header-row" style="margin-bottom:14px;">
+            <div>
+              <h2 class="editorial-heading" style="font-size:22px;">${season.title}</h2>
+              <p class="section-subtitle">${season.subtitle}</p>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <a class="watch-alt-pill" href="https://pluto.tv/uk/search/details/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Pluto TV (${season.chip}) &nearr;</a>
+              <a class="watch-alt-pill" href="https://tubitv.com/search/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Tubi Free (${season.chip}) &nearr;</a>
+            </div>
+          </div>
+          ${
+            seasonalCards.length
+              ? `<div class="cards-grid">${seasonalCards
+                  .map((entry) => (entry.kind === "stream" ? renderStreamCard(entry.item) : renderTvPickCard(entry)))
+                  .join("")}</div>`
+              : `<div class="empty-state">Syncing today's ${season.chip} TV &amp; Pluto TV listings — or browse free seasonal picks on Pluto TV and Tubi above.</div>`
+          }
+        </div>
+      `;
+    }
+
     // 1. What to Watch This Week
     let weekItems = [
       ...catalogue.filter((s) => s.thisWeek).map((s) => ({ kind: "stream", item: s, type: s.type === "Films" ? "Films" : "Streaming", rating: s.rating })),
@@ -849,13 +1014,17 @@
     "MUBI": { color: "#1e293b", url: (q) => `https://mubi.com/en/gb/search?query=${q}` },
     "BFI Player": { color: "#be123c", url: (q) => `https://player.bfi.org.uk/search?q=${q}` },
     "discovery+": { color: "#0369a1", url: (q) => `https://www.discoveryplus.com/gb/search?q=${q}` },
-    "U": { color: "#3f3f46", url: (q) => `https://u.co.uk/search?q=${q}` }
+    "U": { color: "#3f3f46", url: (q) => `https://u.co.uk/search?q=${q}` },
+    "Pluto TV": { color: "#111827", url: (q) => `https://pluto.tv/uk/search/details/${q}` },
+    "Tubi": { color: "#fa382f", url: (q) => `https://tubitv.com/search/${q}` }
   };
 
   function getLiveStreamUrl(ch) {
     if (!ch) return null;
+    if (ch.plutoSlug) return `https://pluto.tv/uk/live-tv/${ch.plutoSlug}`;
     const name = (ch.name || "").toLowerCase();
     const catchup = ch.catchup || "";
+    if (catchup === "Tubi") return "https://tubitv.com/live";
 
     if (/^bbc one/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcone";
     if (/^bbc two/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbctwo";
@@ -927,7 +1096,7 @@
       ? `Watch on ${primaryPlatform}`
       : "Find Where to Stream";
 
-    const quickCheckList = ["BBC iPlayer", "ITVX", "Channel 4", "My5", "Netflix", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "MUBI", "discovery+"]
+    const quickCheckList = ["BBC iPlayer", "ITVX", "Channel 4", "My5", "Pluto TV", "Tubi", "Netflix", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "MUBI", "discovery+"]
       .filter((name) => name !== primaryPlatform);
 
     return `
@@ -1518,7 +1687,8 @@
       ]);
 
       if (channels && channels.length) {
-        liveChannels = channels;
+        const plutoKeep = liveChannels.filter((c) => c.plutoSlug);
+        liveChannels = plutoKeep.length ? [...channels, ...plutoKeep] : channels;
       }
       if (streamItems && streamItems.length) {
         liveStreamingItems = streamItems;

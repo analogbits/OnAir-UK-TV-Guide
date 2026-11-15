@@ -8,7 +8,8 @@ const ONAIR_DATA = (() => {
     { id: "sky", name: "Sky" },
     { id: "virgin", name: "Virgin Media" },
     { id: "bt", name: "BT / EE TV" },
-    { id: "freesat", name: "Freesat" }
+    { id: "freesat", name: "Freesat" },
+    { id: "pluto", name: "Pluto TV" }
   ];
 
   const CHANNEL_CATEGORIES = [
