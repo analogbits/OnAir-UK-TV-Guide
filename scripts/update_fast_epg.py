@@ -60,19 +60,32 @@ def main():
     midnight_ts = midnight.timestamp()
     date_str = midnight.strftime("%Y%m%d")
 
-    # 1. Pluto TV UK
-    pluto_url = (
-        f"https://api.pluto.tv/v2/channels?start={urllib.parse.quote(midnight.isoformat())}"
-        f"&stop={urllib.parse.quote(day_end.isoformat())}"
-    )
-    pluto_raw = json.loads(
-        urllib.request.urlopen(urllib.request.Request(pluto_url, headers={"User-Agent": "Mozilla/5.0"}), timeout=20).read().decode()
-    )
+    # 1. Pluto TV UK (fetch two windows so Pluto's per-channel timeline cap doesn't truncate evening shows)
+    pluto_windows = [
+        (midnight + datetime.timedelta(hours=6), midnight + datetime.timedelta(hours=15)),
+        (midnight + datetime.timedelta(hours=14), midnight + datetime.timedelta(hours=23, minutes=59, seconds=59)),
+    ]
+    pluto_by_id = {}
+    for w_start, w_end in pluto_windows:
+        pluto_url = (
+            f"https://api.pluto.tv/v2/channels?start={urllib.parse.quote(w_start.isoformat())}"
+            f"&stop={urllib.parse.quote(w_end.isoformat())}"
+        )
+        chunk_raw = json.loads(
+            urllib.request.urlopen(urllib.request.Request(pluto_url, headers={"User-Agent": "Mozilla/5.0"}), timeout=20).read().decode()
+        )
+        for ch in chunk_raw:
+            if not ch or not ch.get("_id") or not ch.get("name"):
+                continue
+            existing = pluto_by_id.get(ch["_id"])
+            if not existing:
+                pluto_by_id[ch["_id"]] = ch
+            else:
+                existing["timelines"] = (existing.get("timelines") or []) + (ch.get("timelines") or [])
+
     pluto_channels = []
     pluto_schedules = {}
-    for ch in pluto_raw:
-        if not ch or not ch.get("_id") or not ch.get("name"):
-            continue
+    for ch in pluto_by_id.values():
         cid = f"pluto-{ch['_id']}"
         genre = map_pluto_cat(ch.get("category"), ch.get("name"))
         pluto_channels.append({
@@ -85,9 +98,14 @@ def main():
             "num": ch.get("number") or 0,
         })
         events = []
+        seen_tl = set()
         for idx, tl in enumerate(ch.get("timelines") or []):
             if not tl.get("start") or not tl.get("stop"):
                 continue
+            tl_key = (tl.get("_id") or "", tl["start"])
+            if tl_key in seen_tl:
+                continue
+            seen_tl.add(tl_key)
             s_min = max(0, iso_to_mins(tl["start"], midnight_ts))
             e_min = min(24 * 60, iso_to_mins(tl["stop"], midnight_ts))
             if e_min <= s_min:
@@ -105,6 +123,7 @@ def main():
                 "endMin": e_min,
             })
         if events:
+            events.sort(key=lambda e: e["startMin"])
             pluto_schedules[cid] = events
 
     # 2. Tubi UK

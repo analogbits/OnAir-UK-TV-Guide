@@ -1373,7 +1373,13 @@ const ONAIR_LIVE = (() => {
     midnight.setHours(0, 0, 0, 0);
     const midnightMs = midnight.getTime();
 
-    const targetUrl = `https://api.pluto.tv/v2/channels?start=${encodeURIComponent(dayStart.toISOString())}&stop=${encodeURIComponent(dayEnd.toISOString())}`;
+    // Pluto TV caps timelines per channel from `start`; for Today, start at max(06:00, now - 2h)
+    // so current & evening/night programmes are never truncated.
+    const queryStart = dayOffset === 0
+      ? new Date(Math.max(dayStart.getTime(), Date.now() - 2 * 60 * 60 * 1000))
+      : dayStart;
+
+    const targetUrl = `https://api.pluto.tv/v2/channels?start=${encodeURIComponent(queryStart.toISOString())}&stop=${encodeURIComponent(dayEnd.toISOString())}`;
     let rawList = null;
     for (const url of buildProxyUrls(targetUrl, true)) {
       try {
