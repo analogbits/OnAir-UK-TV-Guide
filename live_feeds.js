@@ -277,7 +277,7 @@ const ONAIR_LIVE = (() => {
     const minSkyDate = getSkyDateString(-7);
     const minIsoDate = getIsoDateString(-7);
     Object.keys(cache).forEach((k) => {
-      if (k.startsWith("epg_") && k.slice(4) < minSkyDate) {
+      if ((k.startsWith("epg_") || k.startsWith("fv_")) && k.split("_")[1] < minSkyDate) {
         delete cache[k];
       } else if (k.startsWith("tvmaze_gb_") && k.slice(10) < minIsoDate) {
         delete cache[k];
@@ -537,18 +537,120 @@ const ONAIR_LIVE = (() => {
 
       if (vaultDirty) saveVault(vault);
 
-      // Backup #1 (TVMaze UK linear broadcast) & Backup #2 (stale localStorage cache) for any SIDs Sky missed
+      // Backup #1 (Freeview UK 165-channel full schedule), Backup #2 (TVMaze UK), Backup #3 (stale cache)
       const missingFromSky = toFetch.filter((sid) => !gotSids.has(String(sid)));
       if (missingFromSky.length > 0) {
-        let tvmazeUkList = [];
-        try {
-          tvmazeUkList = await fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`);
-        } catch {
-          tvmazeUkList = [];
+        // Freeview helper: parse ISO8601 duration "PT1H30M" -> minutes
+        const parseIsoDurMins = (durStr) => {
+          const h = durStr && durStr.match(/(\d+)H/);
+          const m = durStr && durStr.match(/(\d+)M/);
+          return (h ? Number(h[1]) * 60 : 0) + (m ? Number(m[1]) : 0) || 30;
+        };
+        const mapFreeviewGenre = (fvGenre, title, chCat) => {
+          const gCode = fvGenre ? fvGenre.split(":").pop() : "";
+          const key = normalizeTitleKey(title);
+          if (vault[key] && vault[key].category) return vault[key].category;
+          if (tvmazeMap[key]) return tvmazeMap[key];
+          if (gCode === "2") return "News";
+          if (gCode === "4") return "Sport";
+          if (gCode === "5") return "Kids";
+          if (gCode === "6") return "Music";
+          if (gCode === "9" || gCode === "7" || gCode === "8") return "Documentary";
+          if (gCode === "1") return chCat === "Film" ? "Film" : "Drama";
+          return chCat || "Entertainment";
+        };
+        const normChName = (n) =>
+          String(n || "")
+            .toLowerCase()
+            .replace(/\b(hd|uhd|sd|lon|london|uk)\b/g, "")
+            .replace(/[^a-z0-9+]/g, "")
+            .trim();
+
+        let fvByChannel = cache[`fv_${dateStr}`] && cache[`fv_${dateStr}`].byCh ? cache[`fv_${dateStr}`].byCh : null;
+        if (!fvByChannel) {
+          const fvUrl = `https://www.freeview.co.uk/api/tv-guide?nid=64257&start=${dayStartSec}`;
+          let fvData = null;
+          for (const proxyUrl of [
+            `https://corsproxy.io/?${encodeURIComponent(fvUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(fvUrl)}`
+          ]) {
+            try {
+              const r = await fetchJson(proxyUrl);
+              if (r && r.data && Array.isArray(r.data.programs)) {
+                fvData = r.data.programs;
+                break;
+              }
+            } catch {
+              // try next proxy
+            }
+          }
+          if (fvData) {
+            fvByChannel = {};
+            fvData.forEach((chObj) => {
+              const nk = normChName(chObj.title);
+              if (!nk || !Array.isArray(chObj.events)) return;
+              fvByChannel[nk] = chObj.events;
+            });
+            cache[`fv_${dateStr}`] = { ts: Date.now(), byCh: fvByChannel };
+          }
         }
 
-        missingFromSky.forEach((sid) => {
-          const chName = (chNameBySid.get(String(sid)) || "").toLowerCase();
+        let tvmazeUkList = null;
+        for (const sid of missingFromSky) {
+          const rawName = chNameBySid.get(String(sid)) || "";
+          const nk = normChName(rawName);
+          const fvEvents = fvByChannel && (fvByChannel[nk] || fvByChannel[nk.replace(/1$/, "")]);
+
+          if (fvEvents && fvEvents.length > 0) {
+            const mappedFv = fvEvents
+              .map((ev) => {
+                const stSec = Math.floor(new Date(ev.start_time).getTime() / 1000);
+                const durMin = parseIsoDurMins(ev.duration);
+                const startMin = Math.floor((stSec - dayStartSec) / 60);
+                const endMin = startMin + durMin;
+                if (endMin <= 360 || startMin >= 24 * 60) return null;
+                const clampedStart = Math.max(360, startMin);
+                const clampedEnd = Math.min(24 * 60, endMin);
+                if (clampedEnd <= clampedStart) return null;
+                const genre = mapFreeviewGenre(ev.genre, ev.main_title, chCatBySid.get(String(sid)));
+                return {
+                  id: `fv-${ev.uuid || `${sid}-${stSec}`}`,
+                  channelId: `sky-${sid}`,
+                  sid,
+                  dayOffset,
+                  title: ev.main_title || "Untitled",
+                  genre,
+                  rating: "PG",
+                  ep: ev.secondary_title || genre,
+                  desc: ev.secondary_title ? `${ev.main_title}: ${ev.secondary_title}` : `${ev.main_title} (${rawName})`,
+                  cast: genre,
+                  stars: null,
+                  isNew: false,
+                  isLiveData: true,
+                  thisWeek: false,
+                  interests: inferInterestsFromEvent(ev.main_title || "", ev.secondary_title || "", genre),
+                  startMin: clampedStart,
+                  endMin: clampedEnd
+                };
+              })
+              .filter(Boolean);
+
+            if (mappedFv.length > 0) {
+              result[sid] = mappedFv;
+              dayCache[sid] = { ts: Date.now(), events: mappedFv };
+              continue;
+            }
+          }
+
+          // Backup #2: TVMaze UK linear broadcast
+          if (tvmazeUkList === null) {
+            try {
+              tvmazeUkList = await fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`);
+            } catch {
+              tvmazeUkList = [];
+            }
+          }
+          const chName = rawName.toLowerCase();
           const chEvents = (Array.isArray(tvmazeUkList) ? tvmazeUkList : [])
             .filter((ep) => {
               const net = ep.show && ep.show.network && ep.show.network.name ? ep.show.network.name.toLowerCase() : "";
@@ -587,10 +689,10 @@ const ONAIR_LIVE = (() => {
             result[sid] = chEvents;
             dayCache[sid] = { ts: Date.now(), events: chEvents };
           } else if (dayCache[sid] && Array.isArray(dayCache[sid].events)) {
-            // Backup #2: stale cached schedule from localStorage
+            // Backup #3: stale cached schedule from localStorage
             result[sid] = dayCache[sid].events;
           }
-        });
+        }
       }
 
       cache[`epg_${dateStr}`] = dayCache;
