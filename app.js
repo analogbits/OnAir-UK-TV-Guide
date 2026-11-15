@@ -750,7 +750,7 @@
               <p class="section-subtitle">${season.subtitle}</p>
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <a class="watch-alt-pill" href="https://pluto.tv/uk/search/details/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Pluto TV (${season.chip}) &nearr;</a>
+              <a class="watch-alt-pill" href="https://pluto.tv/gb_ie/search/?q=${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Pluto TV (${season.chip}) &nearr;</a>
               <a class="watch-alt-pill" href="https://tubitv.com/search/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Tubi Free (${season.chip}) &nearr;</a>
             </div>
           </div>
@@ -1036,7 +1036,7 @@
     "BFI Player": { color: "#be123c", url: (q) => `https://player.bfi.org.uk/search?q=${q}` },
     "discovery+": { color: "#0369a1", url: (q) => `https://www.discoveryplus.com/gb/search?q=${q}` },
     "U": { color: "#3f3f46", url: (q) => `https://u.co.uk/search?q=${q}` },
-    "Pluto TV": { color: "#111827", url: (q) => `https://pluto.tv/uk/search/details/${q}` },
+    "Pluto TV": { color: "#111827", url: (q) => `https://pluto.tv/gb_ie/search/?q=${q}` },
     "Tubi": { color: "#fa382f", url: (q) => `https://tubitv.com/search/${q}` }
   };
 
