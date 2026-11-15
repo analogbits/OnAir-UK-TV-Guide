@@ -1120,8 +1120,30 @@
       if (Array.isArray(ts) && ts.length) return ts;
     }
     if (dayOffset < 0 && typeof window !== "undefined" && window.ONAIR_PAST_EPG && window.ONAIR_PAST_EPG[dateStr]) {
-      const past = window.ONAIR_PAST_EPG[dateStr][ch.sid];
-      if (Array.isArray(past) && past.length) return past;
+      const pastMap = window.ONAIR_PAST_EPG[dateStr];
+      const rawPast = pastMap[ch.id] || pastMap[ch.sid];
+      if (Array.isArray(rawPast) && rawPast.length) {
+        const dayMidnight = new Date();
+        dayMidnight.setHours(0, 0, 0, 0);
+        dayMidnight.setDate(dayMidnight.getDate() + dayOffset);
+        const midnightSec = Math.floor(dayMidnight.getTime() / 1000);
+        return rawPast
+          .map((ev, idx) => {
+            if (ev.title && ev.startMin != null) return ev;
+            const startMin = Math.max(0, Math.floor(((ev.st || 0) - midnightSec) / 60));
+            const endMin = Math.min(24 * 60, startMin + Number(ev.d || 30));
+            if (endMin <= startMin) return null;
+            return {
+              id: `past-${ch.id}-${dateStr}-${idx}`,
+              title: ev.t || "Untitled",
+              desc: ev.s2 || "",
+              genre: ch.category || "Entertainment",
+              startMin,
+              endMin
+            };
+          })
+          .filter(Boolean);
+      }
     }
     return null;
   }
@@ -1183,6 +1205,77 @@
     });
 
     return { tvMatches, streamMatches };
+  }
+
+  const tvmazeSearchCache = new Map();
+
+  async function fetchLiveShowDirectoryMatches(query) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    if (tvmazeSearchCache.has(q)) return tvmazeSearchCache.get(q);
+
+    // 1. Check local Show Vault first (0 network calls)
+    const results = [];
+    const vaultShows = (typeof window !== "undefined" && window.ONAIR_SHOW_VAULT && window.ONAIR_SHOW_VAULT.shows) || {};
+    Object.values(vaultShows).forEach((s) => {
+      if (!s || !s.title) return;
+      if (`${s.title} ${s.desc || ""} ${s.genre || ""}`.toLowerCase().includes(q)) {
+        results.push({
+          id: `vault-${s.title}`,
+          title: s.title,
+          platform: s.watchPlatform || "UK TV / Streaming",
+          type: "Series",
+          genre: s.genre || "Entertainment",
+          year: s.year || "",
+          seasons: s.ep || "",
+          rating: s.stars || 4.0,
+          cast: s.cast || "",
+          desc: s.desc || "",
+          watchUrl: s.watchUrl || ""
+        });
+      }
+    });
+
+    // 2. Query TVMaze public CORS-enabled show search API if needed
+    if (results.length < 3) {
+      try {
+        const res = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query.trim())}`);
+        if (res.ok) {
+          const list = await res.json();
+          (Array.isArray(list) ? list.slice(0, 6) : []).forEach((entry) => {
+            const show = entry && entry.show;
+            if (!show || !show.name) return;
+            if (results.some((r) => r.title.toLowerCase() === show.name.toLowerCase())) return;
+            const net = (show.network && show.network.name) || (show.webChannel && show.webChannel.name) || "Streaming / On Demand";
+            const cleanSummary = (show.summary || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            results.push({
+              id: `tvmaze-${show.id}`,
+              title: show.name,
+              platform: net,
+              type: show.type || "Series",
+              genre: (show.genres && show.genres[0]) || "Entertainment",
+              year: (show.premiered || "").slice(0, 4) || "",
+              seasons: show.status || "",
+              rating: show.rating && show.rating.average ? Number((show.rating.average / 2).toFixed(1)) : 4.2,
+              cast: "",
+              desc: cleanSummary || `${show.name} (${net}). Click Details to open direct streaming search links.`,
+              watchUrl: show.officialSite || show.url || ""
+            });
+          });
+        }
+      } catch {
+        // Ignore offline/network error
+      }
+    }
+
+    const final = results.slice(0, 8);
+    final.forEach((item) => {
+      if (!liveStreamingItems.some((x) => x.id === item.id)) {
+        liveStreamingItems.push(item);
+      }
+    });
+    tvmazeSearchCache.set(q, final);
+    return final;
   }
 
   function jumpToGuideMatch(channelId, dayOffset, startMin) {
@@ -1308,7 +1401,19 @@
     const streamHtml = visibleStream.map(renderStreamCard).join("");
     el.searchResultsGrid.innerHTML =
       tvHtml + streamHtml ||
-      `<div class="empty-state" style="grid-column:1/-1;">No programmes or streaming titles matched "${query}" in this filter. Try "Sync Upcoming Days" above or switch filter.</div>`;
+      `<div class="empty-state" style="grid-column:1/-1;">Searching UK show database for "${query}"...</div>`;
+
+    if (!tvHtml && !streamHtml && q.length >= 2) {
+      fetchLiveShowDirectoryMatches(query).then((dirItems) => {
+        if (state.searchQuery !== q) return;
+        if (!dirItems.length) {
+          el.searchResultsGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No programmes or streaming titles matched "${query}". Try "Sync Upcoming Days" above or switch filter.</div>`;
+          return;
+        }
+        el.searchSummary.textContent = `Not on live UK TV (-7d..+6d), but found ${dirItems.length} show match(es) for "${query}"`;
+        el.searchResultsGrid.innerHTML = dirItems.map(renderStreamCard).join("");
+      });
+    }
 
     el.searchResultsGrid.querySelectorAll("[data-jump-ch]").forEach((btn) => {
       btn.addEventListener("click", (ev) => {
