@@ -494,7 +494,7 @@
               current
                 ? `<div class="nn-slot is-now" data-prog-id="${current.id}" data-channel-id="${ch.id}">
                     <div class="nn-slot-label">
-                      <span>On Now</span>
+                      <span>On Now ${getLiveStreamUrl(ch) ? `&bull; <a href="${getLiveStreamUrl(ch)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#dc2626; font-weight:700; text-decoration:none;">&#9654; Watch Live &nearr;</a>` : ""}</span>
                       <span>${formatTime(current.startMin)} – ${formatTime(current.endMin)}</span>
                     </div>
                     <div class="nn-slot-title">${current.title}</div>
@@ -852,13 +852,78 @@
     "U": { color: "#3f3f46", url: (q) => `https://u.co.uk/search?q=${q}` }
   };
 
-  function renderWhereToWatchBlock(rawTitle, primaryPlatform, officialSite) {
+  function getLiveStreamUrl(ch) {
+    if (!ch) return null;
+    const name = (ch.name || "").toLowerCase();
+    const catchup = ch.catchup || "";
+
+    if (/^bbc one/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcone";
+    if (/^bbc two/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbctwo";
+    if (/^bbc three/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcthree";
+    if (/^bbc four/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcfour";
+    if (/^cbbc/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/cbbc";
+    if (/^cbeebies/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/cbeebies";
+    if (/^bbc news/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcnews";
+    if (/^bbc parl/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcparliament";
+    if (/^bbc alba/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcalba";
+    if (/^bbc ?scotland/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/bbcscotland";
+    if (/^s4c/i.test(name)) return "https://www.bbc.co.uk/iplayer/live/s4c";
+
+    if (/^itv1/i.test(name)) return "https://www.itv.com/watch?channel=itv";
+    if (/^itv2/i.test(name)) return "https://www.itv.com/watch?channel=itv2";
+    if (/^itv3/i.test(name)) return "https://www.itv.com/watch?channel=itv3";
+    if (/^itv4/i.test(name)) return "https://www.itv.com/watch?channel=itv4";
+    if (/^itv quiz|^itvbe/i.test(name)) return "https://www.itv.com/watch?channel=itvquiz";
+
+    if (/^channel 4/i.test(name)) return "https://www.channel4.com/now/C4";
+    if (/^e4 extra/i.test(name)) return "https://www.channel4.com/now/E4";
+    if (/^e4\b/i.test(name)) return "https://www.channel4.com/now/E4";
+    if (/^more4/i.test(name)) return "https://www.channel4.com/now/M4";
+    if (/^film4/i.test(name)) return "https://www.channel4.com/now/F4";
+    if (/^4seven/i.test(name)) return "https://www.channel4.com/now/4S";
+
+    if (/^5\s*hd$|^channel 5/i.test(name)) return "https://www.channel5.com/live/channel5";
+    if (/^5star/i.test(name)) return "https://www.channel5.com/live/5star";
+    if (/^5 ?usa/i.test(name)) return "https://www.channel5.com/live/5usa";
+    if (/^5action/i.test(name)) return "https://www.channel5.com/live/5action";
+    if (/^5drama/i.test(name)) return "https://www.channel5.com/live/5drama";
+
+    if (/^sky news/i.test(name)) return "https://news.sky.com/watch-live";
+    if (/^gb news/i.test(name)) return "https://www.gbnews.com/watch/live";
+    if (/^al jazeera/i.test(name)) return "https://www.aljazeera.com/live";
+    if (/^france 24/i.test(name)) return "https://www.france24.com/en/live";
+    if (/^euronews/i.test(name)) return "https://www.euronews.com/live";
+    if (/^nhk world/i.test(name)) return "https://www3.nhk.or.jp/nhkworld/en/live/";
+    if (/^blaze/i.test(name)) return "https://www.blaze.tv/live";
+    if (/^talking ?pictures/i.test(name)) return "https://www.tptvencore.co.uk/Live";
+
+    if (catchup === "U" || /^u&/i.test(name)) return "https://u.co.uk/live";
+    if (catchup === "NOW" || /^sky/i.test(name) || /^comedycent/i.test(name) || /^cartoon/i.test(name) || /^boomerang/i.test(name) || /^challenge/i.test(name)) {
+      return "https://www.nowtv.com/watch/home";
+    }
+    if (catchup === "discovery+") return "https://www.discoveryplus.com/gb/epg";
+    if (catchup === "GREAT! player") return "https://www.greatplayer.co.uk/";
+    if (catchup === "Watch Free UK") return "https://www.watchfreeuk.co.uk/";
+    if (catchup === "Paramount+") return "https://www.paramountplus.com/gb/";
+    if (catchup === "BBC iPlayer") return "https://www.bbc.co.uk/iplayer/live";
+    if (catchup === "ITVX") return "https://www.itv.com/watch";
+    if (catchup === "Channel 4") return "https://www.channel4.com/now/C4";
+    if (catchup === "My5") return "https://www.channel5.com/live-tv";
+    return null;
+  }
+
+  function renderWhereToWatchBlock(rawTitle, primaryPlatform, officialSite, liveOpts = null) {
     const cleanTitle = rawTitle.replace(/^Film:\s*/i, "").trim();
     const q = encodeURIComponent(cleanTitle);
     const primary = WATCH_PLATFORMS[primaryPlatform];
-    const primaryHref = officialSite || (primary ? primary.url(q) : `https://www.justwatch.com/uk/search?q=${q}`);
-    const primaryColor = primary ? primary.color : "#0f4c5c";
-    const primaryLabel = primaryPlatform && primaryPlatform !== "Live TV" && primaryPlatform !== "On Demand"
+    const isLiveNow = Boolean(liveOpts && liveOpts.isLive && liveOpts.liveUrl);
+    const primaryHref = isLiveNow
+      ? liveOpts.liveUrl
+      : officialSite || (primary ? primary.url(q) : `https://www.justwatch.com/uk/search?q=${q}`);
+    const primaryColor = isLiveNow ? "#dc2626" : (primary ? primary.color : "#0f4c5c");
+    const primaryLabel = isLiveNow
+      ? `Watch Live on ${liveOpts.channelName}`
+      : primaryPlatform && primaryPlatform !== "Live TV" && primaryPlatform !== "On Demand"
       ? `Watch on ${primaryPlatform}`
       : "Find Where to Stream";
 
@@ -867,11 +932,12 @@
 
     return `
       <div class="watch-links-box">
-        <div class="watch-links-title">Where to Watch &amp; Direct Show Link</div>
+        <div class="watch-links-title">${isLiveNow ? "Live Now &bull; Watch Live Stream" : "Where to Watch &amp; Direct Show Link"}</div>
         <div class="watch-primary-row">
           <a id="modalDirectWatchBtn" class="watch-launch-btn" style="background:${primaryColor}" href="${primaryHref}" target="_blank" rel="noopener">
-            &#9654; ${officialSite ? `Watch "${cleanTitle}" Directly` : primaryLabel} &nearr;
+            &#9654; ${isLiveNow ? primaryLabel : (officialSite ? `Watch "${cleanTitle}" Directly` : primaryLabel)} &nearr;
           </a>
+          ${isLiveNow && primary ? `<a class="watch-launch-btn" style="background:${primary.color}" href="${officialSite || primary.url(q)}" target="_blank" rel="noopener">On Demand (${primaryPlatform}) &nearr;</a>` : ""}
           <a class="watch-launch-btn" style="background:#334155" href="https://www.justwatch.com/uk/search?q=${q}" target="_blank" rel="noopener">
             JustWatch UK &nearr;
           </a>
@@ -915,7 +981,7 @@
     ONAIR_LIVE.resolveDirectShowLink(rawTitle).then((resolved) => {
       if (!resolved) return;
       const btn = document.getElementById("modalDirectWatchBtn");
-      if (btn && !currentOfficialSite && resolved.directUrl) {
+      if (btn && !presetOpts.isLive && !currentOfficialSite && resolved.directUrl) {
         const cleanTitle = rawTitle.replace(/^Film:\s*/i, "").trim();
         btn.href = resolved.directUrl;
         btn.innerHTML = `&#9654; Watch "${cleanTitle}" Directly &nearr;`;
@@ -956,6 +1022,9 @@
     const saved = isInWatchlist(prog.id);
     const hasRem = state.reminders.has(prog.id);
     const chNum = ch.numbers[state.platform];
+    const nowMin = getCurrentMinutes();
+    const isLive = state.dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
+    const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
 
     el.modalBody.innerHTML = `
       <div id="modalHeaderWrap" class="${prog.image ? "modal-header-with-poster" : ""}">
@@ -965,7 +1034,7 @@
             <span class="platform-tag" style="background:${ch.color}">${ch.name}${chNum ? ` &bull; Ch ${chNum}` : ""}</span>
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
-            ${prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : prog.isNew ? `<span class="mini-tag live">NEW</span>` : ""}
+            ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : prog.isNew ? `<span class="mini-tag live">NEW</span>` : ""}
           </div>
           <h2 id="modalTitle" class="modal-title">${prog.title}</h2>
           <div class="modal-meta-line">
@@ -987,7 +1056,7 @@
           <span>${ch.name} &bull; <strong>${ch.catchup}</strong></span>
         </div>
       </div>
-      ${renderWhereToWatchBlock(prog.title, ch.catchup, prog.officialSite)}
+      ${renderWhereToWatchBlock(prog.title, ch.catchup, prog.officialSite, isLive ? { isLive: true, liveUrl, channelName: ch.name } : null)}
       <div class="modal-actions">
         <button class="btn-primary" id="modalWatchlistBtn" type="button">
           ${saved ? "✓ Saved in Watchlist" : "+ Add to Watchlist"}
@@ -1022,7 +1091,7 @@
     };
 
     el.detailModal.classList.remove("hidden");
-    enrichModalDirectLink(prog.title, prog.officialSite);
+    enrichModalDirectLink(prog.title, prog.officialSite, { isLive });
   }
 
   function openStreamModal(streamId) {
