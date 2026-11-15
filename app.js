@@ -36,7 +36,43 @@
   };
 
   // Live Data Stores (100% Live EPG, Zero Fake Schedules)
-  let liveChannels = CHANNELS;
+  function buildFastSeedChannels() {
+    const seed = (typeof window !== "undefined" && window.ONAIR_FAST_SEED) || {};
+    const colorMap = {
+      Film: "#6b21a8",
+      Kids: "#ea580c",
+      Sport: "#16a34a",
+      News: "#dc2626",
+      Music: "#7c3aed",
+      Documentary: "#b45309",
+      Drama: "#be185d"
+    };
+    const mapList = (arr, key) =>
+      (Array.isArray(arr) ? arr : []).map((s) => ({
+        id: s.id,
+        sid: s.sid || s.id,
+        num: s.num || 0,
+        name: s.name,
+        short: s.short,
+        category: s.category || "Entertainment",
+        hd: true,
+        catchup: key === "pluto" ? "Pluto TV" : "Tubi",
+        color: colorMap[s.category] || (key === "pluto" ? "#111827" : "#fa382f"),
+        ...(s.plutoSlug ? { plutoSlug: s.plutoSlug } : {}),
+        ...(s.tubiId ? { tubiId: s.tubiId } : {}),
+        numbers: {
+          freeview: null,
+          sky: null,
+          virgin: null,
+          bt: null,
+          freesat: null,
+          pluto: key === "pluto" ? (s.num || 0) : null,
+          tubi: key === "tubi" ? (s.num || 0) : null
+        }
+      }));
+    return [...mapList(seed.pluto, "pluto"), ...mapList(seed.tubi, "tubi")];
+  }
+  let liveChannels = [...CHANNELS, ...buildFastSeedChannels()];
   const liveEpgByDay = new Map(); // dayOffset -> { [sid]: events[] }
   let liveStreamingItems = [];
   let liveFeedItems = [];

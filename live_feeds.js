@@ -1239,11 +1239,56 @@ const ONAIR_LIVE = (() => {
     return "Entertainment";
   }
 
+  function buildProxyUrls(targetUrl, includeDirect = true) {
+    const isLocalHttp = typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.protocol.startsWith("http");
+    const list = [];
+    if (isLocalHttp) list.push(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+    if (includeDirect) list.push(targetUrl);
+    list.push(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+    list.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
+    return list;
+  }
+
+  function mapSeedChannels(list, platformKey) {
+    const colorMap = {
+      Film: "#6b21a8",
+      Kids: "#ea580c",
+      Sport: "#16a34a",
+      News: "#dc2626",
+      Music: "#7c3aed",
+      Documentary: "#b45309",
+      Drama: "#be185d",
+      Entertainment: platformKey === "pluto" ? "#111827" : "#fa382f"
+    };
+    return (Array.isArray(list) ? list : []).map((s) => ({
+      id: s.id,
+      sid: s.sid || s.id,
+      num: s.num || 0,
+      name: s.name,
+      short: s.short,
+      category: s.category || "Entertainment",
+      hd: true,
+      catchup: platformKey === "pluto" ? "Pluto TV" : "Tubi",
+      color: colorMap[s.category] || (platformKey === "pluto" ? "#111827" : "#fa382f"),
+      ...(s.plutoSlug ? { plutoSlug: s.plutoSlug } : {}),
+      ...(s.tubiId ? { tubiId: s.tubiId } : {}),
+      numbers: {
+        freeview: null,
+        sky: null,
+        virgin: null,
+        bt: null,
+        freesat: null,
+        pluto: platformKey === "pluto" ? (s.num || 0) : null,
+        tubi: platformKey === "tubi" ? (s.num || 0) : null
+      }
+    }));
+  }
+
   async function fetchPlutoTvData(dayOffset = 0, force = false) {
     const dateStr = getSkyDateString(dayOffset);
     const cache = loadCache();
     const cached = cache[`pluto_${dateStr}`];
-    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels)) {
+    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels) && cached.channels.length) {
       return { channels: cached.channels, schedules: cached.schedules || {} };
     }
 
@@ -1259,11 +1304,7 @@ const ONAIR_LIVE = (() => {
 
     const targetUrl = `https://api.pluto.tv/v2/channels?start=${encodeURIComponent(dayStart.toISOString())}&stop=${encodeURIComponent(dayEnd.toISOString())}`;
     let rawList = null;
-    for (const url of [
-      targetUrl,
-      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
-    ]) {
+    for (const url of buildProxyUrls(targetUrl, true)) {
       try {
         const res = await fetchJson(url);
         if (Array.isArray(res) && res.length > 0) {
@@ -1276,10 +1317,11 @@ const ONAIR_LIVE = (() => {
     }
 
     if (!rawList) {
-      if (cached && Array.isArray(cached.channels)) {
+      if (cached && Array.isArray(cached.channels) && cached.channels.length) {
         return { channels: cached.channels, schedules: cached.schedules || {} };
       }
-      return { channels: [], schedules: {} };
+      const seedPluto = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.pluto) || [];
+      return { channels: mapSeedChannels(seedPluto, "pluto"), schedules: {} };
     }
 
     const channels = [];
@@ -1383,10 +1425,7 @@ const ONAIR_LIVE = (() => {
       catById = cache.tubiMeta.catById || {};
     } else {
       const livePageUrl = "https://tubitv.com/live";
-      for (const proxyUrl of [
-        `https://corsproxy.io/?${encodeURIComponent(livePageUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(livePageUrl)}`
-      ]) {
+      for (const proxyUrl of buildProxyUrls(livePageUrl, false)) {
         try {
           const res = await fetch(proxyUrl);
           if (!res.ok) continue;
@@ -1423,10 +1462,16 @@ const ONAIR_LIVE = (() => {
     }
 
     if (!idList || idList.length === 0) {
-      if (cached && Array.isArray(cached.channels)) {
-        return { channels: cached.channels, schedules: cached.schedules || {} };
+      const seedTubi = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.tubi) || [];
+      if (seedTubi.length) {
+        idList = seedTubi.map((s) => s.tubiId).filter(Boolean);
+        seedTubi.forEach((s) => { if (s.tubiId) catById[s.tubiId] = s.category || ""; });
+      } else {
+        if (cached && Array.isArray(cached.channels) && cached.channels.length) {
+          return { channels: cached.channels, schedules: cached.schedules || {} };
+        }
+        return { channels: [], schedules: {} };
       }
-      return { channels: [], schedules: {} };
     }
 
     // 2. Fetch Tubi EPG programming in chunks of 20 IDs
@@ -1434,11 +1479,7 @@ const ONAIR_LIVE = (() => {
     for (let i = 0; i < idList.length; i += 20) {
       const chunk = idList.slice(i, i + 20);
       const apiUrl = `https://epg.production-public.tubi.io/content/epg/programming?platform=web&content_id=${chunk.join(",")}`;
-      for (const url of [
-        apiUrl,
-        `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(apiUrl)}`
-      ]) {
+      for (const url of buildProxyUrls(apiUrl, true)) {
         try {
           const res = await fetchJson(url);
           if (res && Array.isArray(res.rows)) {
@@ -1452,10 +1493,11 @@ const ONAIR_LIVE = (() => {
     }
 
     if (allRows.length === 0) {
-      if (cached && Array.isArray(cached.channels)) {
+      if (cached && Array.isArray(cached.channels) && cached.channels.length) {
         return { channels: cached.channels, schedules: cached.schedules || {} };
       }
-      return { channels: [], schedules: {} };
+      const seedTubi = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.tubi) || [];
+      return { channels: mapSeedChannels(seedTubi, "tubi"), schedules: {} };
     }
 
     const midnight = new Date();
