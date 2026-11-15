@@ -32,7 +32,8 @@
     reminders: new Set(JSON.parse(localStorage.getItem("onair_reminders") || "[]")),
     theme: localStorage.getItem("onair_theme") || "system",
     refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 15),
-    seasonOverride: localStorage.getItem("onair_season_override") || "auto"
+    seasonOverride: localStorage.getItem("onair_season_override") || "auto",
+    seasonalSourceFilter: "all"
   };
 
   // Live Data Stores (100% Live EPG, Zero Fake Schedules)
@@ -812,7 +813,42 @@
         )
       ].join("");
 
-      const seasonalCards = [...liveSeasonal.slice(0, 6), ...streamSeasonal.slice(0, 3)].slice(0, 6);
+      const ukLive = liveSeasonal.filter((x) => !x.channel.plutoSlug && !x.channel.tubiId);
+      const plutoLive = liveSeasonal.filter((x) => x.channel.plutoSlug);
+      const tubiLive = liveSeasonal.filter((x) => x.channel.tubiId);
+
+      let filteredLive = liveSeasonal;
+      if (state.seasonalSourceFilter === "uk") filteredLive = ukLive;
+      else if (state.seasonalSourceFilter === "pluto") filteredLive = plutoLive;
+      else if (state.seasonalSourceFilter === "tubi") filteredLive = tubiLive;
+      else {
+        // Balanced mix across UK TV, Pluto TV, and Tubi
+        const mixed = [];
+        const maxLen = Math.max(ukLive.length, plutoLive.length, tubiLive.length);
+        for (let i = 0; i < maxLen && mixed.length < 6; i++) {
+          if (ukLive[i]) mixed.push(ukLive[i]);
+          if (plutoLive[i] && mixed.length < 6) mixed.push(plutoLive[i]);
+          if (tubiLive[i] && mixed.length < 6) mixed.push(tubiLive[i]);
+        }
+        filteredLive = mixed;
+      }
+
+      const seasonalCards =
+        state.seasonalSourceFilter === "pluto" || state.seasonalSourceFilter === "tubi" || state.seasonalSourceFilter === "uk"
+          ? filteredLive.slice(0, 6)
+          : [...filteredLive.slice(0, 6), ...streamSeasonal.slice(0, 3)].slice(0, 6);
+
+      const sourceFilterPills = [
+        { id: "all", label: `All (${liveSeasonal.length})` },
+        { id: "uk", label: `UK TV (${ukLive.length})` },
+        { id: "pluto", label: `Pluto TV (${plutoLive.length})` },
+        { id: "tubi", label: `Tubi (${tubiLive.length})` }
+      ]
+        .map(
+          (f) => `<button class="chip-pill ${state.seasonalSourceFilter === f.id ? "active" : ""}" data-season-src="${f.id}" type="button">${f.label}</button>`
+        )
+        .join("");
+
       seasonalEl.innerHTML = `
         <div class="interest-picker-card" style="margin-bottom:28px;">
           <div class="section-header-row" style="margin-bottom:10px;">
@@ -820,9 +856,8 @@
               <h2 class="editorial-heading" style="font-size:22px;">${season.title}</h2>
               <p class="section-subtitle">${season.subtitle} <span class="badge badge-now" style="margin-left:6px;">${seasonBadge}</span></p>
             </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <a class="watch-alt-pill" href="https://pluto.tv/gb_ie/search/?q=${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Pluto TV (${season.chip}) &nearr;</a>
-              <a class="watch-alt-pill" href="https://tubitv.com/search/${encodeURIComponent(season.searchQuery)}" target="_blank" rel="noopener">Tubi Free (${season.chip}) &nearr;</a>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              ${sourceFilterPills}
             </div>
           </div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
@@ -833,10 +868,16 @@
               ? `<div class="cards-grid">${seasonalCards
                   .map((entry) => (entry.kind === "stream" ? renderStreamCard(entry.item) : renderTvPickCard(entry)))
                   .join("")}</div>`
-              : `<div class="empty-state">Syncing today's ${season.chip} TV &amp; Pluto TV listings — or browse free seasonal picks on Pluto TV and Tubi above.</div>`
+              : `<div class="empty-state">No ${season.chip} programmes currently matched on ${state.seasonalSourceFilter === "pluto" ? "Pluto TV" : state.seasonalSourceFilter === "tubi" ? "Tubi" : "this source"} right now. <a href="${state.seasonalSourceFilter === "tubi" ? `https://tubitv.com/search/${encodeURIComponent(season.searchQuery)}` : `https://pluto.tv/gb_ie/search/?q=${encodeURIComponent(season.searchQuery)}`}" target="_blank" rel="noopener" style="color:var(--brand-red);font-weight:600;">Browse on-demand &nearr;</a></div>`
           }
         </div>
       `;
+      seasonalEl.querySelectorAll("[data-season-src]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.seasonalSourceFilter = btn.dataset.seasonSrc || "all";
+          renderWhatToWatch();
+        });
+      });
       seasonalEl.querySelectorAll("[data-season-pick]").forEach((btn) => {
         btn.addEventListener("click", () => {
           state.seasonOverride = btn.dataset.seasonPick || "auto";
