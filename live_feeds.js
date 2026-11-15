@@ -1479,6 +1479,7 @@ const ONAIR_LIVE = (() => {
 
     cache[`pluto_${dateStr}`] = { ts: Date.now(), channels, schedules };
     saveCache(cache);
+    feedHealth.pluto = { status: "live", ts: Date.now(), note: `Live (${channels.length} ch)` };
     return { channels, schedules };
   }
 
@@ -1660,6 +1661,7 @@ const ONAIR_LIVE = (() => {
 
     cache[`tubi_${dateStr}`] = { ts: Date.now(), channels, schedules };
     saveCache(cache);
+    feedHealth.tubi = { status: "live", ts: Date.now(), note: `Live (${channels.length} ch)` };
     return { channels, schedules };
   }
 

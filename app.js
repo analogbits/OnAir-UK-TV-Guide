@@ -87,6 +87,8 @@
   })();
   let liveStreamingItems = [];
   let liveFeedItems = [];
+  const livePlutoFetchedDays = new Set();
+  const liveTubiFetchedDays = new Set();
 
   function getMergedCatalogue() {
     const seen = new Set(STREAMING_CATALOGUE.map((i) => i.title.toLowerCase()));
@@ -104,8 +106,9 @@
 
   async function ensureSchedulesForChannels(channels, dayOffset, force = false) {
     if (state.platform === "pluto" && ONAIR_LIVE.fetchPlutoTvData) {
-      const hasPlutoForDay = liveChannels.some((c) => c.plutoSlug) && !force && liveEpgByDay.get(dayOffset) && liveChannels.some((c) => c.plutoSlug && liveEpgByDay.get(dayOffset)[c.sid]);
+      const hasPlutoForDay = !force && livePlutoFetchedDays.has(dayOffset);
       if (!hasPlutoForDay) {
+        livePlutoFetchedDays.add(dayOffset);
         const pluto = await ONAIR_LIVE.fetchPlutoTvData(dayOffset, force).catch(() => ({ channels: [], schedules: {} }));
         if (pluto.channels && pluto.channels.length) {
           const existingIds = new Set(liveChannels.map((c) => c.id));
@@ -125,8 +128,9 @@
     }
 
     if (state.platform === "tubi" && ONAIR_LIVE.fetchTubiLiveData) {
-      const hasTubiForDay = liveChannels.some((c) => c.tubiId) && !force && liveEpgByDay.get(dayOffset) && liveChannels.some((c) => c.tubiId && liveEpgByDay.get(dayOffset)[c.sid]);
+      const hasTubiForDay = !force && liveTubiFetchedDays.has(dayOffset);
       if (!hasTubiForDay) {
+        liveTubiFetchedDays.add(dayOffset);
         const tubi = await ONAIR_LIVE.fetchTubiLiveData(dayOffset, force).catch(() => ({ channels: [], schedules: {} }));
         if (tubi.channels && tubi.channels.length) {
           const existingIds = new Set(liveChannels.map((c) => c.id));
