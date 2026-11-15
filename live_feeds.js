@@ -8,13 +8,30 @@
    ========================================================================== */
 
 const ONAIR_LIVE = (() => {
-  const CACHE_TTL_MS = 15 * 60 * 1000;
+  const CACHE_TTL_MS = 30 * 60 * 1000;          // 30m default to minimize API pulls
+  const LOW_DATA_CACHE_TTL_MS = 120 * 60 * 1000; // 2h in Low-Data mode
   const CHANNELS_TTL_MS = 24 * 60 * 60 * 1000;   // 24h for UK channel lineup
   const STREAMING_TTL_MS = 12 * 60 * 60 * 1000; // 12h for streaming drops
   const RSS_TTL_MS = 2 * 60 * 60 * 1000;        // 2h for news/RSS feeds
   const VAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days for reusable show metadata & links
   const STORAGE_KEY = "onair_live_epg_v6";
   const VAULT_STORAGE_KEY = "onair_show_vault_v1";
+  const inFlightRequests = new Map();
+  const hostBackoffUntil = new Map();
+  const feedHealth = {
+    sky: { status: "idle", ts: 0, note: "Not queried yet" },
+    pluto: { status: "idle", ts: 0, note: "Snapshot / on-demand" },
+    tubi: { status: "idle", ts: 0, note: "Snapshot / on-demand" },
+    proxy: { status: "idle", ts: 0, note: "Not checked" }
+  };
+
+  function getEffectiveCacheTtlMs() {
+    try {
+      return localStorage.getItem("onair_low_data") === "1" ? LOW_DATA_CACHE_TTL_MS : CACHE_TTL_MS;
+    } catch {
+      return CACHE_TTL_MS;
+    }
+  }
 
   // Sky service genre (sg) -> OnAir category
   const SG_TO_CATEGORY = {
@@ -347,10 +364,54 @@ const ONAIR_LIVE = (() => {
     }
   }
 
-  async function fetchJson(url) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+  async function fetchJson(url, timeoutMs = 10000) {
+    let host = "";
+    try {
+      host = new URL(url, typeof location !== "undefined" && location.href.startsWith("http") ? location.href : "https://localhost").hostname;
+    } catch {
+      host = "";
+    }
+    const backoffUntil = host ? hostBackoffUntil.get(host) || 0 : 0;
+    if (backoffUntil > Date.now()) {
+      throw new Error(`Rate-limit cooldown for ${host}`);
+    }
+
+    if (inFlightRequests.has(url)) {
+      return inFlightRequests.get(url);
+    }
+
+    const reqPromise = (async () => {
+      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      try {
+        const res = await fetch(url, controller ? { signal: controller.signal } : undefined);
+        if (res.status === 429 || res.status === 503) {
+          if (host) hostBackoffUntil.set(host, Date.now() + 5 * 60 * 1000);
+          throw new Error(`HTTP ${res.status}`);
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } finally {
+        if (timer) clearTimeout(timer);
+        inFlightRequests.delete(url);
+      }
+    })();
+
+    inFlightRequests.set(url, reqPromise);
+    return reqPromise;
+  }
+
+  async function fetchChunksPolitely(items, mapper, concurrency = 2, delayMs = 100) {
+    const results = [];
+    for (let i = 0; i < items.length; i += concurrency) {
+      const slice = items.slice(i, i + concurrency);
+      const batchRes = await Promise.all(slice.map(mapper));
+      results.push(...batchRes);
+      if (i + concurrency < items.length && delayMs > 0) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+    return results;
   }
 
   function inferCategoryFromChannel(skyNum, sg, name) {
@@ -486,7 +547,7 @@ const ONAIR_LIVE = (() => {
       const hasEvents = dayCache[sid] && Array.isArray(dayCache[sid].events) && dayCache[sid].events.length > 0;
       const isSparseTvm = hasEvents && String(dayCache[sid].events[0].id || "").startsWith("tvm-") && repoPastDay;
       const isPastDayReuse = dayOffset < 0 && hasEvents && !isSparseTvm;
-      if (isPastDayReuse || (!force && !isSparseTvm && dayCache[sid] && Date.now() - dayCache[sid].ts < CACHE_TTL_MS)) {
+      if (isPastDayReuse || (!force && !isSparseTvm && dayCache[sid] && Date.now() - dayCache[sid].ts < getEffectiveCacheTtlMs())) {
         result[sid] = dayCache[sid].events;
       } else if (!inFlightSids.has(`${dateStr}-${sid}`)) {
         toFetch.push(sid);
@@ -507,10 +568,17 @@ const ONAIR_LIVE = (() => {
       const isoDate = getIsoDateString(dayOffset);
       const [tvmazeMap, responses] = await Promise.all([
         fetchTvmazeUkMap(isoDate, cache),
-        Promise.all(
-          chunks.map((chunk) =>
-            fetchJson(`https://awk.epgsky.com/hawk/linear/schedule/${dateStr}/${chunk.join(",")}`).catch(() => ({ schedule: [] }))
-          )
+        fetchChunksPolitely(
+          chunks,
+          (chunk) =>
+            fetchJson(`https://awk.epgsky.com/hawk/linear/schedule/${dateStr}/${chunk.join(",")}`)
+              .then((r) => {
+                feedHealth.sky = { status: "live", ts: Date.now(), note: "Connected (awk.epgsky.com)" };
+                return r;
+              })
+              .catch(() => ({ schedule: [] })),
+          2,
+          100
         )
       ]);
 
@@ -1290,7 +1358,8 @@ const ONAIR_LIVE = (() => {
     const dateStr = getSkyDateString(dayOffset);
     const cache = loadCache();
     const cached = cache[`pluto_${dateStr}`];
-    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels) && cached.channels.length) {
+    if (!force && cached && cached.ts && Date.now() - cached.ts < getEffectiveCacheTtlMs() && Array.isArray(cached.channels) && cached.channels.length) {
+      feedHealth.pluto = { status: "cached", ts: cached.ts, note: `Cached (${cached.channels.length} ch)` };
       return { channels: cached.channels, schedules: cached.schedules || {} };
     }
 
@@ -1417,7 +1486,8 @@ const ONAIR_LIVE = (() => {
     const dateStr = getSkyDateString(dayOffset);
     const cache = loadCache();
     const cached = cache[`tubi_${dateStr}`];
-    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels)) {
+    if (!force && cached && cached.ts && Date.now() - cached.ts < getEffectiveCacheTtlMs() && Array.isArray(cached.channels)) {
+      feedHealth.tubi = { status: "cached", ts: cached.ts, note: `Cached (${cached.channels.length} ch)` };
       return { channels: cached.channels, schedules: cached.schedules || {} };
     }
 
@@ -1593,6 +1663,14 @@ const ONAIR_LIVE = (() => {
     return { channels, schedules };
   }
 
+  function getFeedHealth() {
+    return {
+      ...feedHealth,
+      effectiveTtlMins: Math.round(getEffectiveCacheTtlMs() / 60000),
+      backoffHosts: [...hostBackoffUntil.entries()].filter(([, until]) => until > Date.now()).map(([h]) => h)
+    };
+  }
+
   return {
     fetchLiveChannels,
     fetchPlutoTvData,
@@ -1603,6 +1681,7 @@ const ONAIR_LIVE = (() => {
     resolveDirectShowLink,
     getVaultStats,
     getStorageReport,
+    getFeedHealth,
     buildExportVaultJs,
     clearEpgCache,
     clearShowVault

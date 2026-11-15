@@ -31,7 +31,8 @@
     watchlist: JSON.parse(localStorage.getItem("onair_watchlist") || "[]"),
     reminders: new Set(JSON.parse(localStorage.getItem("onair_reminders") || "[]")),
     theme: localStorage.getItem("onair_theme") || "system",
-    refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 15),
+    refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 30),
+    lowDataMode: localStorage.getItem("onair_low_data") === "1",
     seasonOverride: localStorage.getItem("onair_season_override") || "auto",
     seasonalSourceFilter: "all"
   };
@@ -1897,13 +1898,14 @@
   // Settings & Data Storage
   // ========================================================================
   let liveRefreshTimerId = null;
+  let lastManualRefreshTs = 0;
 
   function scheduleAutoRefresh() {
     if (liveRefreshTimerId) {
       clearInterval(liveRefreshTimerId);
       liveRefreshTimerId = null;
     }
-    if (state.refreshMins > 0) {
+    if (!state.lowDataMode && state.refreshMins > 0) {
       liveRefreshTimerId = setInterval(() => refreshLiveScheduleOnly(), state.refreshMins * 60 * 1000);
     }
   }
@@ -1925,6 +1927,13 @@
     const report = ONAIR_LIVE.getStorageReport
       ? ONAIR_LIVE.getStorageReport()
       : { repoUpdatedAt: null, repoShowsCount: 0, repoStreamingCount: 0, mergedShowsCount: 0, localShowsCount: 0, epgDaysCached: 0, totalStorageKb: "0.0" };
+    const health = ONAIR_LIVE.getFeedHealth
+      ? ONAIR_LIVE.getFeedHealth()
+      : { sky: { status: "idle", note: "Unknown" }, pluto: { status: "idle", note: "Unknown" }, tubi: { status: "idle", note: "Unknown" }, effectiveTtlMins: 30, backoffHosts: [] };
+    const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
+    const snapLabel = snap && snap.generatedAt
+      ? `${snap.dateStr} (${new Date(snap.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })})`
+      : "Not loaded";
 
     const updatedLabel = report.repoUpdatedAt
       ? new Date(report.repoUpdatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
@@ -1932,8 +1941,8 @@
 
     el.settingsContainer.innerHTML = `
       <div class="settings-card">
-        <h2>Display &amp; Live Schedule Settings</h2>
-        <p class="settings-card-desc">Control how OnAir UK looks and how often live TV schedules, What's On, and Recommendations refresh.</p>
+        <h2>Display, Platform &amp; Seasonal Preferences</h2>
+        <p class="settings-card-desc">Control appearance, default platform, and seasonal spotlight behaviour across OnAir UK.</p>
 
         <div class="settings-row">
           <div class="settings-row-label">
@@ -1959,28 +1968,62 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <strong>Live Schedule Auto-Refresh</strong>
-            <span>Refreshes only live TV schedules &amp; What's On (never re-fetches stored show links/scores).</span>
+            <strong>Seasonal Spotlight &amp; Filter</strong>
+            <span>Auto-updates year-round by date, or preview any season anytime.</span>
           </div>
-          <select id="settingRefreshSelect" class="settings-select">
-            <option value="5" ${state.refreshMins === 5 ? "selected" : ""}>Every 5 minutes</option>
-            <option value="15" ${state.refreshMins === 15 ? "selected" : ""}>Every 15 minutes</option>
-            <option value="30" ${state.refreshMins === 30 ? "selected" : ""}>Every 30 minutes</option>
-            <option value="0" ${state.refreshMins === 0 ? "selected" : ""}>Manual only</option>
+          <select id="settingSeasonSelect" class="settings-select">
+            <option value="auto" ${state.seasonOverride === "auto" ? "selected" : ""}>Auto (${getAutoSeason().chip} · ${getAutoSeason().windowLabel})</option>
+            ${SEASON_CALENDAR.map((s) => `<option value="${s.id}" ${state.seasonOverride === s.id ? "selected" : ""}>${s.chip} (${s.windowLabel})</option>`).join("")}
           </select>
         </div>
 
         <div class="settings-actions">
-          <button id="settingRefreshNowBtn" class="btn-primary" type="button">Refresh Live EPG Now</button>
           <button id="rerunSetupWizardBtn" class="btn-secondary" type="button">Re-run Setup Wizard</button>
           <button id="reinitAppBtn" class="btn-danger-outline" type="button">Reset &amp; Re-initialise Setup</button>
         </div>
       </div>
 
       <div class="settings-card">
-        <h2>Show Vault &amp; Data Storage</h2>
+        <h2>Data Saver &amp; Anti-Burst Sync Controls</h2>
         <p class="settings-card-desc">
-          Pre-stored shows, IMDb/RT scores, and direct links live in <code>vault_data.js</code> in this folder (updated daily via GitHub Actions or <code>python3 update_vault.py</code>), with extra lookups cached in browser <code>localStorage</code>.
+          Minimises external API pulls using polite batching (2 chunks at a time), request deduplication, 429/503 cooldowns, and local caching.
+        </p>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Low-Data Mode</strong>
+            <span>Extends EPG cache to 2 hours and disables background auto-refresh polling (on-demand only).</span>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
+            <input id="settingLowDataToggle" type="checkbox" ${state.lowDataMode ? "checked" : ""} />
+            ${state.lowDataMode ? "Enabled (2h cache)" : "Off"}
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Live Schedule Auto-Refresh</strong>
+            <span>Only refreshes live schedules when Low-Data Mode is off (never re-fetches stored Show Vault links).</span>
+          </div>
+          <select id="settingRefreshSelect" class="settings-select" ${state.lowDataMode ? "disabled" : ""}>
+            <option value="15" ${state.refreshMins === 15 ? "selected" : ""}>Every 15 minutes</option>
+            <option value="30" ${state.refreshMins === 30 ? "selected" : ""}>Every 30 minutes (Recommended)</option>
+            <option value="60" ${state.refreshMins === 60 ? "selected" : ""}>Every 60 minutes</option>
+            <option value="120" ${state.refreshMins === 120 ? "selected" : ""}>Every 2 hours</option>
+            <option value="0" ${state.refreshMins === 0 ? "selected" : ""}>Manual only</option>
+          </select>
+        </div>
+
+        <div class="settings-actions">
+          <button id="settingRefreshNowBtn" class="btn-primary" type="button">Refresh Live EPG Now</button>
+          <button id="clearEpgCacheBtn" class="btn-danger-outline" type="button">Clear EPG Cache (Keep Vault)</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h2>Show Vault, Local &amp; GitHub Backups</h2>
+        <p class="settings-card-desc">
+          Pre-stored shows, IMDb/RT scores, and direct links live in <code>vault_data.js</code> in your repo/folder, while <code>fast_epg_snapshot.js</code> backs up Pluto TV &amp; Tubi schedules.
         </p>
 
         <div class="storage-stat-grid">
@@ -2004,15 +2047,15 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <strong>Folder Vault Last Updated</strong>
-            <span>${updatedLabel} (${report.repoShowsCount} shows in <code>vault_data.js</code>, ${report.localShowsCount} in browser)</span>
+            <strong>Folder Vault &amp; Snapshot</strong>
+            <span>Vault: ${updatedLabel} (${report.repoShowsCount} repo, ${report.localShowsCount} browser) &bull; Pluto/Tubi Snapshot: ${snapLabel}</span>
           </div>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-label">
             <strong>Your Saved Items</strong>
-            <span>${state.watchlist.length} in Watchlist &bull; ${state.favorites.size} Favourite channels &bull; ${state.interests.size} Interests</span>
+            <span>${state.watchlist.length} in Watchlist &bull; ${state.favorites.size} Favourite channels &bull; ${state.interests.size} Interests &bull; ${state.reminders.size} Reminders</span>
           </div>
         </div>
 
@@ -2023,11 +2066,32 @@
             Import Backup (.json)
             <input id="importBackupInput" type="file" accept=".json,application/json" style="display:none;" />
           </label>
-        </div>
-
-        <div class="settings-actions">
-          <button id="clearEpgCacheBtn" class="btn-danger-outline" type="button">Clear EPG Cache</button>
           <button id="clearShowVaultBtn" class="btn-danger-outline" type="button">Clear Browser Show Vault</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h2>Live Feed Health &amp; Failsafe Diagnostics</h2>
+        <p class="settings-card-desc">Current status of live UK EPG sources, local proxy failsafe, and active cache window (${health.effectiveTtlMins} min TTL).</p>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Sky / Freeview / Virgin / BT / Freesat EPG</strong>
+            <span>${health.sky.note}</span>
+          </div>
+          <span class="badge ${health.sky.status === "live" ? "badge-live" : "badge-now"}">${health.sky.status.toUpperCase()}</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Pluto TV UK &amp; Tubi UK</strong>
+            <span>Pluto: ${health.pluto.note} &bull; Tubi: ${health.tubi.note}</span>
+          </div>
+          <span class="badge badge-now">${snap ? "SNAPSHOT + PROXY" : "PROXY"}</span>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Rate-Limit Protection</strong>
+            <span>${health.backoffHosts.length ? `Cooldown active for: ${health.backoffHosts.join(", ")}` : "All hosts healthy (no 429/503 cooldowns)"}</span>
+          </div>
         </div>
       </div>
     `;
@@ -2045,6 +2109,21 @@
       showToast(`Default platform set to ${PLATFORMS.find((p) => p.id === state.platform).name}`);
     };
 
+    document.getElementById("settingSeasonSelect").onchange = (e) => {
+      state.seasonOverride = e.target.value || "auto";
+      localStorage.setItem("onair_season_override", state.seasonOverride);
+      renderCategoryPills();
+      showToast(`Seasonal spotlight set to ${state.seasonOverride === "auto" ? "Auto" : getActiveSeason().chip}`);
+    };
+
+    document.getElementById("settingLowDataToggle").onchange = (e) => {
+      state.lowDataMode = Boolean(e.target.checked);
+      localStorage.setItem("onair_low_data", state.lowDataMode ? "1" : "0");
+      scheduleAutoRefresh();
+      renderSettings();
+      showToast(state.lowDataMode ? "Low-Data Mode enabled (2h cache, no background polling)" : "Low-Data Mode disabled");
+    };
+
     document.getElementById("settingRefreshSelect").onchange = (e) => {
       state.refreshMins = Number(e.target.value);
       localStorage.setItem("onair_refresh_mins", String(state.refreshMins));
@@ -2053,6 +2132,13 @@
     };
 
     document.getElementById("settingRefreshNowBtn").onclick = () => {
+      const elapsed = Date.now() - lastManualRefreshTs;
+      if (elapsed < 30 * 1000) {
+        const waitSec = Math.ceil((30 * 1000 - elapsed) / 1000);
+        showToast(`Please wait ${waitSec}s before refreshing again (anti-burst cooldown)`);
+        return;
+      }
+      lastManualRefreshTs = Date.now();
       refreshLiveScheduleOnly().then(() => {
         showToast("Live TV schedules refreshed");
         renderSettings();
