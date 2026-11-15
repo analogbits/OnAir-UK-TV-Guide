@@ -1241,8 +1241,10 @@ const ONAIR_LIVE = (() => {
 
   function buildProxyUrls(targetUrl, includeDirect = true) {
     const isLocalHttp = typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.protocol.startsWith("http");
+    const isFile = typeof location !== "undefined" && location.protocol === "file:";
     const list = [];
     if (isLocalHttp) list.push(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+    else if (isFile) list.push(`http://127.0.0.1:8765/api/proxy?url=${encodeURIComponent(targetUrl)}`);
     if (includeDirect) list.push(targetUrl);
     list.push(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
     list.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
@@ -1321,7 +1323,9 @@ const ONAIR_LIVE = (() => {
         return { channels: cached.channels, schedules: cached.schedules || {} };
       }
       const seedPluto = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.pluto) || [];
-      return { channels: mapSeedChannels(seedPluto, "pluto"), schedules: {} };
+      const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
+      const snapSchedules = snap && snap.dateStr === dateStr && snap.plutoSchedules ? snap.plutoSchedules : {};
+      return { channels: mapSeedChannels(seedPluto, "pluto"), schedules: snapSchedules };
     }
 
     const channels = [];
@@ -1497,7 +1501,9 @@ const ONAIR_LIVE = (() => {
         return { channels: cached.channels, schedules: cached.schedules || {} };
       }
       const seedTubi = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.tubi) || [];
-      return { channels: mapSeedChannels(seedTubi, "tubi"), schedules: {} };
+      const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
+      const snapSchedules = snap && snap.dateStr === dateStr && snap.tubiSchedules ? snap.tubiSchedules : {};
+      return { channels: mapSeedChannels(seedTubi, "tubi"), schedules: snapSchedules };
     }
 
     const midnight = new Date();

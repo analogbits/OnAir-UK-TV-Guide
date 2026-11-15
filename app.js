@@ -74,6 +74,15 @@
   }
   let liveChannels = [...CHANNELS, ...buildFastSeedChannels()];
   const liveEpgByDay = new Map(); // dayOffset -> { [sid]: events[] }
+  (() => {
+    const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
+    if (!snap) return;
+    const d = new Date();
+    const todayStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    if (snap.dateStr === todayStr) {
+      liveEpgByDay.set(0, { ...(snap.plutoSchedules || {}), ...(snap.tubiSchedules || {}) });
+    }
+  })();
   let liveStreamingItems = [];
   let liveFeedItems = [];
 
