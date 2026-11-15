@@ -230,6 +230,16 @@
   };
 
   // Helpers
+  function getBroadcastStatus(prog) {
+    if (!prog) return "";
+    const title = prog.title || "";
+    const desc = prog.desc || "";
+    if (prog.isNew || /^New:\s*/i.test(title)) return "New";
+    if (/^Live:\s*/i.test(title) || (prog.genre === "News" && !/\(R\)|\brepeat\b/i.test(desc))) return "";
+    if (/\(R\)|\brepeat\b/i.test(desc) || prog.isLiveData || String(prog.id || "").startsWith("past-")) return "Repeat";
+    return "";
+  }
+
   function formatTime(minutesFromMidnight) {
     const h = Math.floor(minutesFromMidnight / 60) % 24;
     const m = minutesFromMidnight % 60;
@@ -579,7 +589,7 @@
                   >
                     <div class="prog-top-row">
                       <span class="prog-title">${p.title}</span>
-                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : p.isNew ? `<span class="mini-tag">NEW</span>` : ""}
+                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : getBroadcastStatus(p) === "New" ? `<span class="mini-tag">NEW</span>` : getBroadcastStatus(p) === "Repeat" ? `<span class="mini-tag">R</span>` : ""}
                     </div>
                     <div class="prog-bottom-row">
                       <span class="prog-time">${formatTime(p.startMin)}–${formatTime(p.endMin)}</span>
@@ -1455,6 +1465,7 @@
       .map(({ prog, channel, dayOffset, status, whenLabel }) => {
         const chNum = channel.numbers[state.platform];
         const platLabel = chNum != null ? `${channel.name} (${chNum})` : channel.name;
+        const bStatus = getBroadcastStatus(prog);
         return `
         <article class="stream-card" data-prog-id="${prog.id}" data-channel-id="${channel.id}">
           <div class="stream-card-banner" style="background:${channel.color}"></div>
@@ -1464,7 +1475,7 @@
               <span class="mini-tag ${status === "live" ? "catchup" : ""}">${whenLabel}</span>
             </div>
             <h3 class="stream-card-title">${prog.title}</h3>
-            <div class="stream-card-meta">${prog.ep || ""} &bull; ${prog.genre}</div>
+            <div class="stream-card-meta">${prog.ep || ""} &bull; ${prog.genre}${bStatus ? ` &bull; <strong>${bStatus}</strong>` : ""}</div>
             <p class="stream-card-desc">${prog.desc || ""}</p>
             <div class="stream-card-footer">
               <button class="chip-pill" type="button" data-jump-ch="${channel.id}" data-jump-day="${dayOffset}" data-jump-min="${prog.startMin}" onclick="event.stopPropagation();">Jump to Guide</button>
@@ -1710,7 +1721,8 @@
             <span class="platform-tag" style="background:${ch.color}">${ch.name}${chNum ? ` &bull; Ch ${chNum}` : ""}</span>
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
-            ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : prog.isNew ? `<span class="mini-tag live">NEW</span>` : ""}
+            ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
+            ${getBroadcastStatus(prog) === "New" ? `<span class="mini-tag live">NEW</span>` : getBroadcastStatus(prog) === "Repeat" ? `<span class="mini-tag">REPEAT</span>` : ""}
           </div>
           <h2 id="modalTitle" class="modal-title">${prog.title}</h2>
           <div class="modal-meta-line">
@@ -3007,7 +3019,10 @@
             lines.push(
               nextOnes
                 .slice(0, 3)
-                .map((m) => `<strong>${escapeHtml(m.prog.title)}</strong> &bull; ${m.whenLabel} on <strong>${escapeHtml(m.channel.name)}</strong>`)
+                .map((m) => {
+                  const bs = getBroadcastStatus(m.prog);
+                  return `<strong>${escapeHtml(m.prog.title)}</strong>${bs ? ` <em>(${bs})</em>` : ""} &bull; ${m.whenLabel} on <strong>${escapeHtml(m.channel.name)}</strong>`;
+                })
                 .join("<br/>")
             );
           } else if (pastOnes.length) {
