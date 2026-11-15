@@ -1022,7 +1022,7 @@
     const saved = isInWatchlist(prog.id);
     const hasRem = state.reminders.has(prog.id);
     const chNum = ch.numbers[state.platform];
-    const nowMin = getCurrentMinutes();
+    const nowMin = getNowMinutes();
     const isLive = state.dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
 
