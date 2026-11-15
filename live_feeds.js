@@ -427,7 +427,9 @@ const ONAIR_LIVE = (() => {
     const toFetch = [];
 
     sids.forEach((sid) => {
-      if (!force && dayCache[sid] && Date.now() - dayCache[sid].ts < CACHE_TTL_MS) {
+      const hasEvents = dayCache[sid] && Array.isArray(dayCache[sid].events) && dayCache[sid].events.length > 0;
+      const isPastDayReuse = dayOffset < 0 && hasEvents;
+      if (isPastDayReuse || (!force && dayCache[sid] && Date.now() - dayCache[sid].ts < CACHE_TTL_MS)) {
         result[sid] = dayCache[sid].events;
       } else if (!inFlightSids.has(`${dateStr}-${sid}`)) {
         toFetch.push(sid);
