@@ -143,6 +143,7 @@
           </div>
           <button id="closeSearchResults" class="ghost-btn" type="button">Back to Guide</button>
         </div>
+        <div id="searchFilterBar" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;"></div>
         <div id="searchResultsGrid" class="cards-grid"></div>
       </div>
     </section>
@@ -384,6 +385,27 @@
         </div>
         <div id="watchlistItems" class="drawer-body"></div>
       </div>
+    </aside>
+
+    <!-- OnAir Assistant Chat Bot -->
+    <button id="chatFab" class="chat-fab" type="button" aria-label="Open OnAir Assistant" title="Ask OnAir Assistant">
+      <span>💬</span>
+      <span class="chat-fab-label">Ask OnAir</span>
+    </button>
+    <aside id="chatPanel" class="chat-panel hidden" aria-label="OnAir Assistant">
+      <div class="chat-header">
+        <div>
+          <strong>OnAir Assistant</strong>
+          <div class="chat-subtitle">Find shows, check when on next &amp; jump anywhere</div>
+        </div>
+        <button id="closeChatBtn" class="modal-close" type="button" aria-label="Close assistant">&times;</button>
+      </div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <div id="chatQuickPrompts" class="chat-quick-prompts"></div>
+      <form id="chatForm" class="chat-input-row">
+        <input id="chatInput" type="text" placeholder="e.g. When is Bargain Hunt on next? / Open Pluto TV..." autocomplete="off" />
+        <button class="btn-primary" type="submit">Send</button>
+      </form>
     </aside>
 
     <!-- Toast Notification -->
