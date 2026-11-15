@@ -645,6 +645,7 @@ const ONAIR_LIVE = (() => {
                 cast: genre,
                 stars: null,
                 isNew: Boolean(ev.new),
+                isRepeat: /\(R\)|\brepeat\b/i.test(ev.sy || "") || /\(R\)|\brepeat\b/i.test(rawTitle),
                 isLiveData: true,
                 thisWeek: Boolean(ev.new),
                 interests: inferInterestsFromEvent(rawTitle, ev.sy || "", genre),

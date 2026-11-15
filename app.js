@@ -236,7 +236,7 @@
     const desc = prog.desc || "";
     if (prog.isNew || /^New:\s*/i.test(title)) return "New";
     if (/^Live:\s*/i.test(title) || (prog.genre === "News" && !/\(R\)|\brepeat\b/i.test(desc))) return "";
-    if (/\(R\)|\brepeat\b/i.test(desc) || prog.isLiveData || String(prog.id || "").startsWith("past-")) return "Repeat";
+    if (prog.isRepeat || /\(R\)|\brepeat\b/i.test(desc) || /\(R\)|\brepeat\b/i.test(title)) return "Repeat";
     return "";
   }
 
