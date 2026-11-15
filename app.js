@@ -76,9 +76,30 @@
       }
     }
 
+    if (state.platform === "tubi" && ONAIR_LIVE.fetchTubiLiveData) {
+      const hasTubiForDay = liveChannels.some((c) => c.tubiId) && !force && liveEpgByDay.get(dayOffset) && liveChannels.some((c) => c.tubiId && liveEpgByDay.get(dayOffset)[c.sid]);
+      if (!hasTubiForDay) {
+        const tubi = await ONAIR_LIVE.fetchTubiLiveData(dayOffset, force).catch(() => ({ channels: [], schedules: {} }));
+        if (tubi.channels && tubi.channels.length) {
+          const existingIds = new Set(liveChannels.map((c) => c.id));
+          const newTubi = tubi.channels.filter((c) => !existingIds.has(c.id));
+          if (newTubi.length) liveChannels = [...liveChannels, ...newTubi];
+          const currentMap = liveEpgByDay.get(dayOffset) || {};
+          tubi.channels.forEach((c) => {
+            if (tubi.schedules[c.id]) currentMap[c.sid] = tubi.schedules[c.id];
+          });
+          liveEpgByDay.set(dayOffset, currentMap);
+          if (state.view === "epg") renderEPG(false);
+          else if (state.view === "now-next") renderNowNext(false);
+          else if (state.view === "what-to-watch") renderWhatToWatch();
+          return;
+        }
+      }
+    }
+
     const dayMap = liveEpgByDay.get(dayOffset) || {};
     const missingSids = channels
-      .filter((c) => !c.plutoSlug)
+      .filter((c) => !c.plutoSlug && !c.tubiId)
       .map((c) => c.sid)
       .filter((sid) => sid && (force || !dayMap[sid]));
 
@@ -1022,6 +1043,7 @@
   function getLiveStreamUrl(ch) {
     if (!ch) return null;
     if (ch.plutoSlug) return `https://pluto.tv/uk/live-tv/${ch.plutoSlug}`;
+    if (ch.tubiId) return `https://tubitv.com/live/${ch.tubiId}`;
     const name = (ch.name || "").toLowerCase();
     const catchup = ch.catchup || "";
     if (catchup === "Tubi") return "https://tubitv.com/live";
@@ -1687,8 +1709,8 @@
       ]);
 
       if (channels && channels.length) {
-        const plutoKeep = liveChannels.filter((c) => c.plutoSlug);
-        liveChannels = plutoKeep.length ? [...channels, ...plutoKeep] : channels;
+        const extraKeep = liveChannels.filter((c) => c.plutoSlug || c.tubiId);
+        liveChannels = extraKeep.length ? [...channels, ...extraKeep] : channels;
       }
       if (streamItems && streamItems.length) {
         liveStreamingItems = streamItems;

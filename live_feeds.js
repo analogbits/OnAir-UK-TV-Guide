@@ -1367,9 +1367,188 @@ const ONAIR_LIVE = (() => {
     return { channels, schedules };
   }
 
+  async function fetchTubiLiveData(dayOffset = 0, force = false) {
+    const dateStr = getSkyDateString(dayOffset);
+    const cache = loadCache();
+    const cached = cache[`tubi_${dateStr}`];
+    if (!force && cached && cached.ts && Date.now() - cached.ts < CACHE_TTL_MS && Array.isArray(cached.channels)) {
+      return { channels: cached.channels, schedules: cached.schedules || {} };
+    }
+
+    // 1. Get Tubi live channel IDs & category names (cached 24h)
+    let idList = null;
+    let catById = {};
+    if (!force && cache.tubiMeta && Date.now() - cache.tubiMeta.ts < CHANNELS_TTL_MS && Array.isArray(cache.tubiMeta.ids) && cache.tubiMeta.ids.length) {
+      idList = cache.tubiMeta.ids;
+      catById = cache.tubiMeta.catById || {};
+    } else {
+      const livePageUrl = "https://tubitv.com/live";
+      for (const proxyUrl of [
+        `https://corsproxy.io/?${encodeURIComponent(livePageUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(livePageUrl)}`
+      ]) {
+        try {
+          const res = await fetch(proxyUrl);
+          if (!res.ok) continue;
+          const html = await res.text();
+          const m = html.match(/window\.__data\s*=\s*(\{[\s\S]*?\});?\s*<\/script>/);
+          if (!m) continue;
+          const data = JSON.parse(m[1].replace(/\bundefined\b/g, "null"));
+          const containers = (data.epg && data.epg.contentIdsByContainer && data.epg.contentIdsByContainer.tubitv_us_linear) || [];
+          const seen = new Set();
+          const ids = [];
+          const cats = {};
+          containers.forEach((c) => {
+            const cname = c.name || "";
+            (c.contents || []).forEach((cid) => {
+              const sid = String(cid);
+              if (!seen.has(sid)) {
+                seen.add(sid);
+                ids.push(sid);
+                cats[sid] = cname;
+              }
+            });
+          });
+          if (ids.length > 0) {
+            idList = ids;
+            catById = cats;
+            cache.tubiMeta = { ts: Date.now(), ids, catById };
+            saveCache(cache);
+            break;
+          }
+        } catch {
+          // Try next proxy
+        }
+      }
+    }
+
+    if (!idList || idList.length === 0) {
+      if (cached && Array.isArray(cached.channels)) {
+        return { channels: cached.channels, schedules: cached.schedules || {} };
+      }
+      return { channels: [], schedules: {} };
+    }
+
+    // 2. Fetch Tubi EPG programming in chunks of 20 IDs
+    const allRows = [];
+    for (let i = 0; i < idList.length; i += 20) {
+      const chunk = idList.slice(i, i + 20);
+      const apiUrl = `https://epg.production-public.tubi.io/content/epg/programming?platform=web&content_id=${chunk.join(",")}`;
+      for (const url of [
+        apiUrl,
+        `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(apiUrl)}`
+      ]) {
+        try {
+          const res = await fetchJson(url);
+          if (res && Array.isArray(res.rows)) {
+            allRows.push(...res.rows);
+            break;
+          }
+        } catch {
+          // Try next URL
+        }
+      }
+    }
+
+    if (allRows.length === 0) {
+      if (cached && Array.isArray(cached.channels)) {
+        return { channels: cached.channels, schedules: cached.schedules || {} };
+      }
+      return { channels: [], schedules: {} };
+    }
+
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    midnight.setDate(midnight.getDate() + dayOffset);
+    const midnightMs = midnight.getTime();
+
+    const channels = [];
+    const schedules = {};
+    const colorMap = {
+      Film: "#6b21a8",
+      Kids: "#ea580c",
+      News: "#dc2626",
+      Sport: "#15803d",
+      Documentary: "#0f766e",
+      Music: "#db2777",
+      Drama: "#881337",
+      Entertainment: "#fa382f"
+    };
+
+    allRows.forEach((row, idx) => {
+      if (!row || !row.content_id || !row.title) return;
+      const cid = String(row.content_id);
+      const chId = `tubi-${cid}`;
+      const category = mapPlutoCategory(catById[cid] || "", row.title);
+
+      channels.push({
+        id: chId,
+        sid: cid,
+        tubiId: cid,
+        name: row.title,
+        short: makeShortCode(row.title),
+        color: colorMap[category] || "#fa382f",
+        category,
+        hd: true,
+        catchup: "Tubi",
+        numbers: {
+          tubi: idx + 1,
+          pluto: null,
+          freeview: null,
+          sky: null,
+          virgin: null,
+          bt: null,
+          freesat: null
+        }
+      });
+
+      const events = (row.programs || [])
+        .map((p, pIdx) => {
+          const stMs = Date.parse(p.start_time);
+          const enMs = Date.parse(p.end_time);
+          if (Number.isNaN(stMs) || Number.isNaN(enMs)) return null;
+          const startMin = Math.floor((stMs - midnightMs) / 60000);
+          const endMin = Math.floor((enMs - midnightMs) / 60000);
+          if (endMin <= 360 || startMin >= 24 * 60) return null;
+          const clampedStart = Math.max(360, startMin);
+          const clampedEnd = Math.min(24 * 60, endMin);
+          if (clampedEnd <= clampedStart) return null;
+
+          const rating = p.ratings && p.ratings[0] ? p.ratings[0].value : "12";
+          const img = p.images && ((p.images.poster && p.images.poster[0]) || (p.images.thumbnail && p.images.thumbnail[0])) || null;
+          return {
+            id: `tubi-${cid}-${p.id || pIdx}`,
+            title: p.title || row.title,
+            desc: p.description || row.description || `${row.title} live free streaming on Tubi.`,
+            genre: category,
+            ep: p.season_number && p.episode_number ? `Series ${p.season_number}, Ep ${p.episode_number}` : (p.episode_title || category),
+            rating,
+            cast: category,
+            image: img,
+            stars: null,
+            isNew: false,
+            isLiveData: true,
+            thisWeek: false,
+            interests: inferInterestsFromEvent(p.title || "", p.description || "", category),
+            startMin: clampedStart,
+            endMin: clampedEnd
+          };
+        })
+        .filter(Boolean);
+
+      schedules[chId] = events;
+    });
+
+    cache[`tubi_${dateStr}`] = { ts: Date.now(), channels, schedules };
+    saveCache(cache);
+    return { channels, schedules };
+  }
+
   return {
     fetchLiveChannels,
     fetchPlutoTvData,
+    fetchTubiLiveData,
     fetchSkySchedulesForSids,
     fetchLiveStreaming,
     fetchRssFeeds,
