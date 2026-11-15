@@ -1252,14 +1252,18 @@
               id: `tvmaze-${show.id}`,
               title: show.name,
               platform: net,
+              platformColor: "#334155",
               type: show.type || "Series",
               genre: (show.genres && show.genres[0]) || "Entertainment",
               year: (show.premiered || "").slice(0, 4) || "",
               seasons: show.status || "",
+              age: "15",
               rating: show.rating && show.rating.average ? Number((show.rating.average / 2).toFixed(1)) : 4.2,
-              cast: "",
-              desc: cleanSummary || `${show.name} (${net}). Click Details to open direct streaming search links.`,
-              watchUrl: show.officialSite || show.url || ""
+              cast: (show.genres || []).join(", ") || "Series",
+              desc: cleanSummary || `${show.name} (${net}). Click Details to open direct UK on-demand links (Netflix, Channel 4, iPlayer, Prime Video).`,
+              image: (show.image && (show.image.medium || show.image.original)) || "",
+              officialSite: show.officialSite || show.url || "",
+              isLiveData: true
             });
           });
         }
@@ -1332,11 +1336,24 @@
         { id: "past", label: `Past 7 Days (${pastMatches.length})` },
         { id: "stream", label: `Streaming (${streamMatches.length})` }
       ];
+      const onDemandPills = ["Netflix", "Channel 4", "BBC iPlayer", "ITVX", "Prime Video", "Disney+", "Pluto TV", "Tubi"]
+        .filter((name) => WATCH_PLATFORMS[name])
+        .map((name) => {
+          const p = WATCH_PLATFORMS[name];
+          return `<a class="watch-alt-pill" href="${p.url(encodeURIComponent(query.trim()))}" target="_blank" rel="noopener">${name} &nearr;</a>`;
+        })
+        .join("");
+
       filterBar.innerHTML =
+        `<div style="display:flex; gap:8px; flex-wrap:wrap; width:100%; align-items:center;">` +
         tabs
           .map((t) => `<button class="chip-pill ${state.searchFilter === t.id ? "active" : ""}" data-search-filter="${t.id}" type="button">${t.label}</button>`)
           .join("") +
-        `<button id="syncUpcomingSearchBtn" class="chip-pill" type="button" title="Fetch upcoming days (+1 to +6) if not cached yet">🔄 Sync Upcoming Days</button>`;
+        `<button id="syncUpcomingSearchBtn" class="chip-pill" type="button" title="Fetch upcoming days (+1 to +6) if not cached yet">🔄 Sync Upcoming Days</button>` +
+        `</div>` +
+        `<div style="display:flex; gap:6px; flex-wrap:wrap; width:100%; align-items:center; margin-top:4px;">` +
+        `<span style="font-size:12px; color:var(--text-muted); font-weight:600;">Search UK On-Demand:</span>${onDemandPills}` +
+        `</div>`;
 
       filterBar.querySelectorAll("[data-search-filter]").forEach((btn) => {
         btn.addEventListener("click", () => {
