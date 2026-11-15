@@ -898,7 +898,7 @@
     if (/^talking ?pictures/i.test(name)) return "https://www.tptvencore.co.uk/Live";
 
     if (catchup === "U" || /^u&/i.test(name)) return "https://u.co.uk/live";
-    if (catchup === "NOW" || /^sky/i.test(name) || /^comedycent/i.test(name) || /^cartoon/i.test(name) || /^boomerang/i.test(name) || /^challenge/i.test(name)) {
+    if (catchup === "NOW" || /^sky|^comedycent|^cartoon|^boomerang|^challenge|^mtv|^nick/i.test(name)) {
       return "https://www.nowtv.com/watch/home";
     }
     if (catchup === "discovery+") return "https://www.discoveryplus.com/gb/epg";
@@ -937,6 +937,7 @@
           <a id="modalDirectWatchBtn" class="watch-launch-btn" style="background:${primaryColor}" href="${primaryHref}" target="_blank" rel="noopener">
             &#9654; ${isLiveNow ? primaryLabel : (officialSite ? `Watch "${cleanTitle}" Directly` : primaryLabel)} &nearr;
           </a>
+          ${isLiveNow && liveOpts.liveUrl === "https://www.nowtv.com/watch/home" ? `<a class="watch-launch-btn" style="background:#0f172a" href="https://www.sky.com/watch/sky-go/all" target="_blank" rel="noopener">Sky Go &nearr;</a>` : ""}
           ${isLiveNow && primary ? `<a class="watch-launch-btn" style="background:${primary.color}" href="${officialSite || primary.url(q)}" target="_blank" rel="noopener">On Demand (${primaryPlatform}) &nearr;</a>` : ""}
           <a class="watch-launch-btn" style="background:#334155" href="https://www.justwatch.com/uk/search?q=${q}" target="_blank" rel="noopener">
             JustWatch UK &nearr;
