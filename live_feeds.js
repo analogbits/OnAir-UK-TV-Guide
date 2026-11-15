@@ -426,10 +426,16 @@ const ONAIR_LIVE = (() => {
     const result = {};
     const toFetch = [];
 
+    const repoPastDay =
+      dayOffset < 0 && typeof window !== "undefined" && window.ONAIR_PAST_EPG && window.ONAIR_PAST_EPG[dateStr]
+        ? window.ONAIR_PAST_EPG[dateStr]
+        : null;
+
     sids.forEach((sid) => {
       const hasEvents = dayCache[sid] && Array.isArray(dayCache[sid].events) && dayCache[sid].events.length > 0;
-      const isPastDayReuse = dayOffset < 0 && hasEvents;
-      if (isPastDayReuse || (!force && dayCache[sid] && Date.now() - dayCache[sid].ts < CACHE_TTL_MS)) {
+      const isSparseTvm = hasEvents && String(dayCache[sid].events[0].id || "").startsWith("tvm-") && repoPastDay;
+      const isPastDayReuse = dayOffset < 0 && hasEvents && !isSparseTvm;
+      if (isPastDayReuse || (!force && !isSparseTvm && dayCache[sid] && Date.now() - dayCache[sid].ts < CACHE_TTL_MS)) {
         result[sid] = dayCache[sid].events;
       } else if (!inFlightSids.has(`${dateStr}-${sid}`)) {
         toFetch.push(sid);
@@ -568,7 +574,7 @@ const ONAIR_LIVE = (() => {
             .replace(/[^a-z0-9+]/g, "")
             .trim();
 
-        let fvByChannel = cache[`fv_${dateStr}`] && cache[`fv_${dateStr}`].byCh ? cache[`fv_${dateStr}`].byCh : null;
+        let fvByChannel = repoPastDay || (cache[`fv_${dateStr}`] && cache[`fv_${dateStr}`].byCh ? cache[`fv_${dateStr}`].byCh : null);
         if (!fvByChannel) {
           const fvUrl = `https://www.freeview.co.uk/api/tv-guide?nid=64257&start=${dayStartSec}`;
           let fvData = null;
@@ -606,31 +612,34 @@ const ONAIR_LIVE = (() => {
           if (fvEvents && fvEvents.length > 0) {
             const mappedFv = fvEvents
               .map((ev) => {
-                const stSec = Math.floor(new Date(ev.start_time).getTime() / 1000);
-                const durMin = parseIsoDurMins(ev.duration);
+                const isCompact = typeof ev.st === "number";
+                const title = isCompact ? ev.t : ev.main_title;
+                const subTitle = isCompact ? ev.s2 : ev.secondary_title;
+                const stSec = isCompact ? ev.st : Math.floor(new Date(ev.start_time).getTime() / 1000);
+                const durMin = isCompact ? ev.d : parseIsoDurMins(ev.duration);
                 const startMin = Math.floor((stSec - dayStartSec) / 60);
                 const endMin = startMin + durMin;
                 if (endMin <= 360 || startMin >= 24 * 60) return null;
                 const clampedStart = Math.max(360, startMin);
                 const clampedEnd = Math.min(24 * 60, endMin);
                 if (clampedEnd <= clampedStart) return null;
-                const genre = mapFreeviewGenre(ev.genre, ev.main_title, chCatBySid.get(String(sid)));
+                const genre = mapFreeviewGenre(isCompact ? ev.g : ev.genre, title, chCatBySid.get(String(sid)));
                 return {
                   id: `fv-${ev.uuid || `${sid}-${stSec}`}`,
                   channelId: `sky-${sid}`,
                   sid,
                   dayOffset,
-                  title: ev.main_title || "Untitled",
+                  title: title || "Untitled",
                   genre,
                   rating: "PG",
-                  ep: ev.secondary_title || genre,
-                  desc: ev.secondary_title ? `${ev.main_title}: ${ev.secondary_title}` : `${ev.main_title} (${rawName})`,
+                  ep: subTitle || genre,
+                  desc: subTitle ? `${title}: ${subTitle}` : `${title} (${rawName})`,
                   cast: genre,
                   stars: null,
                   isNew: false,
                   isLiveData: true,
                   thisWeek: false,
-                  interests: inferInterestsFromEvent(ev.main_title || "", ev.secondary_title || "", genre),
+                  interests: inferInterestsFromEvent(title || "", subTitle || "", genre),
                   startMin: clampedStart,
                   endMin: clampedEnd
                 };

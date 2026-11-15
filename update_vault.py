@@ -258,6 +258,74 @@ def main():
         f"{len(streaming_list)} streaming items ({rt_lookups_done} new RT lookups)."
     )
 
+    update_past_epg(today)
+
+
+def norm_channel_key(name):
+    s = re.sub(r"\b(hd|uhd|sd|lon|london|uk)\b", "", str(name or "").lower())
+    return re.sub(r"[^a-z0-9+]", "", s).strip()
+
+
+def parse_iso_duration_mins(dur):
+    if not dur:
+        return 30
+    hm = re.search(r"(\d+)H", dur)
+    mm = re.search(r"(\d+)M", dur)
+    return (int(hm.group(1)) * 60 if hm else 0) + (int(mm.group(1)) if mm else 0) or 30
+
+
+def update_past_epg(today):
+    past_file = os.path.join(HERE, "past_epg_data.js")
+    past_data = {}
+    for offset in range(-7, 0):
+        d = today + timedelta(days=offset)
+        date_str = d.strftime("%Y%m%d")
+        start_ts = int(datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=timezone.utc).timestamp())
+        url = f"https://www.freeview.co.uk/api/tv-guide?nid=64257&start={start_ts}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                fv = json.loads(resp.read().decode("utf-8"))
+            programs = fv.get("data", {}).get("programs", [])
+            day_map = {}
+            for ch in programs:
+                nk = norm_channel_key(ch.get("title"))
+                if not nk:
+                    continue
+                evs = []
+                for ev in ch.get("events", []):
+                    st_str = ev.get("start_time")
+                    if not st_str:
+                        continue
+                    try:
+                        st_dt = datetime.strptime(st_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                        st_sec = int(st_dt.timestamp())
+                    except Exception:
+                        continue
+                    g_raw = ev.get("genre") or ""
+                    g_code = g_raw.split(":")[-1] if ":" in g_raw else ""
+                    evs.append({
+                        "t": ev.get("main_title") or "Untitled",
+                        "st": st_sec,
+                        "d": parse_iso_duration_mins(ev.get("duration")),
+                        "g": g_code,
+                        "s2": ev.get("secondary_title") or "",
+                    })
+                if evs:
+                    day_map[nk] = evs
+            if day_map:
+                past_data[date_str] = day_map
+                print(f"  Freeview {date_str}: {len(day_map)} channels")
+        except Exception as exc:
+            print(f"  Warning: Freeview {date_str} failed ({exc})")
+
+    if past_data:
+        with open(past_file, "w", encoding="utf-8") as f:
+            f.write("window.ONAIR_PAST_EPG = ")
+            json.dump(past_data, f, ensure_ascii=False, separators=(",", ":"))
+            f.write(";\n")
+        print(f"Updated {past_file}: {len(past_data)} past days saved.")
+
 
 if __name__ == "__main__":
     main()

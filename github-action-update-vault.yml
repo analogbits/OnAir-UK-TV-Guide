@@ -27,7 +27,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add vault_data.js
+          git add vault_data.js past_epg_data.js
           if ! git diff --staged --quiet; then
             git commit -m "chore: update OnAir UK show & streaming vault"
             git push
