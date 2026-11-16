@@ -284,6 +284,12 @@
     toastTimer = setTimeout(() => el.toast.classList.add("hidden"), 2600);
   }
 
+  function channelSortValue(num) {
+    const s = String(num ?? "");
+    if (/^0\d+/.test(s)) return 10000 + Number(s);
+    return Number(s) || 99999;
+  }
+
   function getFilteredChannels(category) {
     const filtered = liveChannels.filter((ch) => {
       if (ch.numbers[state.platform] === null || ch.numbers[state.platform] === undefined) {
@@ -292,7 +298,7 @@
       if (category === "Favorites") return state.favorites.has(ch.id);
       if (category !== "All" && ch.category !== category) return false;
       return true;
-    }).sort((a, b) => Number(a.numbers[state.platform]) - Number(b.numbers[state.platform]));
+    }).sort((a, b) => channelSortValue(a.numbers[state.platform]) - channelSortValue(b.numbers[state.platform]));
 
     // On Freeview/Virgin/BT/Freesat, deduplicate HD/SD variants sharing the same EPG number (prefer HD)
     if (state.platform === "sky") return filtered;
@@ -304,7 +310,7 @@
         byNum.set(num, ch);
       }
     });
-    return Array.from(byNum.values()).sort((a, b) => Number(a.numbers[state.platform]) - Number(b.numbers[state.platform]));
+    return Array.from(byNum.values()).sort((a, b) => channelSortValue(a.numbers[state.platform]) - channelSortValue(b.numbers[state.platform]));
   }
 
   const SEASON_CALENDAR = [

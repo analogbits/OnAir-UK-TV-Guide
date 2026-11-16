@@ -556,7 +556,7 @@ const ONAIR_LIVE = (() => {
     const cache = loadCache();
     const byRegion = cache.channelsByRegion || {};
     const cachedReg = byRegion[region.id];
-    if (!force && cachedReg && cachedReg.ver === 5 && Date.now() - cachedReg.ts < CHANNELS_TTL_MS) {
+    if (!force && cachedReg && cachedReg.ver === 6 && Date.now() - cachedReg.ts < CHANNELS_TTL_MS) {
       logDebug("Channels", `Cache hit for region "${region.short}" (${cachedReg.list.length} channels)`, "info");
       return cachedReg.list;
     }
@@ -566,9 +566,11 @@ const ONAIR_LIVE = (() => {
       const services = (data.services || []).filter((s) => !s.adult && Number(s.c) < 800);
 
       const channels = services.map((s) => {
-        const skyNum = Number(s.c);
+        const rawCode = String(s.c || "").trim();
+        const isSkyRadio = /^0\d+/.test(rawCode);
+        const skyNum = Number(rawCode);
         const name = s.t;
-        const category = inferCategoryFromChannel(s.c, s.sg, name);
+        const category = inferCategoryFromChannel(rawCode, s.sg, name);
         const isTimeshift = /\+1\b/i.test(name);
         const meta = isTimeshift
           ? null
@@ -598,7 +600,7 @@ const ONAIR_LIVE = (() => {
           hd: s.sf === "HD" || s.sf === "UHD",
           catchup: meta ? meta.catchup : (s.avail && s.avail.includes("OTT") ? "On Demand" : "Live TV"),
           numbers: {
-            sky: skyNum,
+            sky: isSkyRadio ? rawCode : skyNum,
             freeview: meta ? meta.freeview : null,
             virgin: meta ? meta.virgin : null,
             bt: meta ? meta.bt : null,
@@ -610,9 +612,9 @@ const ONAIR_LIVE = (() => {
       if (channels.length > 0) {
         cache.channelsByRegion = {
           ...(cache.channelsByRegion || {}),
-          [region.id]: { ts: Date.now(), ver: 5, list: channels }
+          [region.id]: { ts: Date.now(), ver: 6, list: channels }
         };
-        cache.channels = { ts: Date.now(), ver: 5, list: channels };
+        cache.channels = { ts: Date.now(), ver: 6, list: channels };
         saveCache(cache);
         return channels;
       }
