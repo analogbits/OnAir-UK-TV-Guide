@@ -3690,6 +3690,9 @@
       const issueHtml = dataRes && dataRes.issueNote
         ? `<div style="width:100%; font-size:11.5px; color:#d97706; margin-top:4px;">&#9888;&#65039; ${escapeHtml(dataRes.issueNote)}</div>`
         : "";
+      const xmasLinks = isoDate.slice(5, 7) === "12"
+        ? `<a href="https://www.bbc.co.uk/mediacentre/christmas-on-the-bbc" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">🎄 BBC Christmas ↗</a><a href="https://tvradar.uk/christmas-tv-guide" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">🎄 TV Radar ↗</a>`
+        : "";
       if (el.timeMachineBanner) {
         el.timeMachineBanner.innerHTML = `
           <div>
@@ -3698,6 +3701,7 @@
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             <button id="tmRefreshBtn" class="ghost-btn" type="button" style="padding:5px 10px; font-size:12px;">&#8635; Refresh</button>
+            ${xmasLinks}
             <a href="${escapeHtml(genomeUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">BBC Genome ↗</a>
             <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">tv24.co.uk ↗</a>
             <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
