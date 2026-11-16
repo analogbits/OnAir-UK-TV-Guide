@@ -561,7 +561,14 @@
       const toFetch = state.epgCategory === "Favorites" ? getFilteredChannels("Favorites") : platformChannels;
       ensureSchedulesForChannels(toFetch, state.dayOffset);
     }
-    const channels = filterChannelsByCurrentProgramme(platformChannels, state.epgCategory, state.dayOffset, nowMin);
+    let channels = filterChannelsByCurrentProgramme(platformChannels, state.epgCategory, state.dayOffset, nowMin);
+    if (state.timeMachineDate && timeMachineEpg) {
+      channels = [...channels].sort((a, b) => {
+        const aHas = (timeMachineEpg[a.sid] || []).length > 0 ? 1 : 0;
+        const bHas = (timeMachineEpg[b.sid] || []).length > 0 ? 1 : 0;
+        return bHas - aHas;
+      });
+    }
     const totalMinutes = (END_HOUR - START_HOUR) * 60;
     const trackWidth = totalMinutes * PIXELS_PER_MIN;
 
@@ -586,7 +593,9 @@
           if (progs === null) {
             progsHtml = `<div style="padding:26px 20px; font-size:12px; color:var(--text-muted);">Fetching live schedule...</div>`;
           } else if (progs.length === 0) {
-            progsHtml = `<div style="padding:26px 20px; font-size:12px; color:var(--text-muted);">No broadcast data published for this channel today.</div>`;
+            progsHtml = state.timeMachineDate
+              ? `<div style="padding:22px 20px; font-size:12px; color:var(--text-muted);">No archive data for ${escapeHtml(ch.name)} on ${escapeHtml(state.timeMachineDate)} &mdash; <a href="https://tv24.co.uk/tv/${escapeHtml(state.timeMachineDate)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent); font-weight:600; text-decoration:none;">View full day on tv24.co.uk &nearr;</a></div>`
+              : `<div style="padding:26px 20px; font-size:12px; color:var(--text-muted);">No broadcast data published for this channel today.</div>`;
           } else {
             progsHtml = progs
               .map((p) => {

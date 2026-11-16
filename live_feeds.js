@@ -662,17 +662,49 @@ const ONAIR_LIVE = (() => {
     return Object.keys(byCh).length ? byCh : null;
   }
 
+  function matchTvmazeNetwork(chName, netName) {
+    const net = String(netName || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    if (!net) return false;
+    let ch = String(chName || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\b(hd|uhd|sd|lon|london|ni|scot|wal|wales)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (ch === "5") ch = "channel 5";
+    if (ch === "utv" || ch === "stv") ch = "itv1";
+    if (ch === "sky showcase") ch = "sky one";
+    if (ch === "virgin one") ch = "virgin media one";
+    if (ch === "virgin two") ch = "virgin media two";
+
+    if (ch === net) return true;
+    if ((ch === "itv1" && (net === "itv" || net === "itv1")) || (ch === "bbc one" && net === "bbc one") || (ch === "bbc two" && net === "bbc two")) {
+      return true;
+    }
+    if (ch.length >= 4 && net.length >= 4 && (ch === net || net.startsWith(ch + " ") || ch.startsWith(net + " "))) {
+      return true;
+    }
+    return false;
+  }
+
   async function fetchTimeMachineDay(isoDate, channelsList = []) {
-    const [tv24Map, tvmList] = await Promise.all([
+    const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
       fetchTv24DayMap(isoDate).catch(() => null),
-      fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => [])
+      fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
+      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
     ]);
+    const tvmList = [
+      ...(Array.isArray(tvmGbList) ? tvmGbList : []),
+      ...(Array.isArray(tvmIeList) ? tvmIeList : [])
+    ];
 
     const schedulesBySid = {};
     let totalEvents = 0;
     const sources = [];
     if (tv24Map) sources.push("tv24.co.uk");
-    if (Array.isArray(tvmList) && tvmList.length) sources.push("TVMaze UK");
+    if (Array.isArray(tvmGbList) && tvmGbList.length) sources.push("TVMaze UK");
+    if (Array.isArray(tvmIeList) && tvmIeList.length) sources.push("TVMaze IE");
 
     (channelsList || []).forEach((ch) => {
       if (!ch || !ch.sid || ch.plutoSlug || ch.tubiId) return;
@@ -704,11 +736,10 @@ const ONAIR_LIVE = (() => {
       }
 
       if (Array.isArray(tvmList) && tvmList.length) {
-        const chLower = (ch.name || "").toLowerCase().replace(/\b(hd|uhd|sd|lon|london|ni|scot|wal)\b/g, "").trim();
         const matches = tvmList
           .filter((ep) => {
-            const net = ep.show && ep.show.network && ep.show.network.name ? ep.show.network.name.toLowerCase() : "";
-            return net && (chLower.includes(net) || net.includes(chLower));
+            const net = ep.show && ep.show.network && ep.show.network.name ? ep.show.network.name : "";
+            return matchTvmazeNetwork(ch.name, net);
           })
           .map((ep) => {
             const parts = (ep.airtime || "12:00").split(":");
