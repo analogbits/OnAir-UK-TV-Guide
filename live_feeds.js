@@ -1407,12 +1407,21 @@ const ONAIR_LIVE = (() => {
 
     // Prefer any live/cached schedules, or fall back to today's full-day snapshot
     const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
-    const snapSchedules = snap && snap.dateStr === dateStr && snap.plutoSchedules ? snap.plutoSchedules : {};
+    const snapSchedules =
+      snap && (snap.dateStr === dateStr || dayOffset === 0) && snap.plutoSchedules
+        ? snap.plutoSchedules
+        : {};
     if (!rawList) {
-      if (cached && Array.isArray(cached.channels) && cached.channels.length) {
-        return { channels: cached.channels, schedules: cached.schedules || snapSchedules };
+      if (cached && Array.isArray(cached.channels) && cached.channels.length && cached.schedules && Object.keys(cached.schedules).length) {
+        feedHealth.pluto = { status: "cached", ts: cached.ts || Date.now(), note: `Cached (${cached.channels.length} ch)` };
+        return { channels: cached.channels, schedules: cached.schedules };
       }
       const seedPluto = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.pluto) || [];
+      feedHealth.pluto = {
+        status: Object.keys(snapSchedules).length ? "cached" : "error",
+        ts: Date.now(),
+        note: Object.keys(snapSchedules).length ? `Snapshot (${snap.dateStr})` : "Unavailable"
+      };
       return { channels: mapSeedChannels(seedPluto, "pluto"), schedules: snapSchedules };
     }
 
@@ -1573,26 +1582,38 @@ const ONAIR_LIVE = (() => {
     for (let i = 0; i < idList.length; i += 20) {
       const chunk = idList.slice(i, i + 20);
       const apiUrl = `https://epg.production-public.tubi.io/content/epg/programming?platform=web&content_id=${chunk.join(",")}`;
+      let chunkOk = false;
       for (const url of buildProxyUrls(apiUrl, true)) {
         try {
           const res = await fetchJson(url);
           if (res && Array.isArray(res.rows)) {
             allRows.push(...res.rows);
+            chunkOk = true;
             break;
           }
         } catch {
           // Try next URL
         }
       }
+      if (!chunkOk && i === 0) break;
     }
 
     if (allRows.length === 0) {
-      if (cached && Array.isArray(cached.channels) && cached.channels.length) {
-        return { channels: cached.channels, schedules: cached.schedules || {} };
+      if (cached && Array.isArray(cached.channels) && cached.channels.length && cached.schedules && Object.keys(cached.schedules).length) {
+        feedHealth.tubi = { status: "cached", ts: cached.ts || Date.now(), note: `Cached (${cached.channels.length} ch)` };
+        return { channels: cached.channels, schedules: cached.schedules };
       }
       const seedTubi = (typeof window !== "undefined" && window.ONAIR_FAST_SEED && window.ONAIR_FAST_SEED.tubi) || [];
       const snap = typeof window !== "undefined" && window.ONAIR_FAST_EPG_SNAPSHOT;
-      const snapSchedules = snap && snap.dateStr === dateStr && snap.tubiSchedules ? snap.tubiSchedules : {};
+      const snapSchedules =
+        snap && (snap.dateStr === dateStr || dayOffset === 0) && snap.tubiSchedules
+          ? snap.tubiSchedules
+          : {};
+      feedHealth.tubi = {
+        status: Object.keys(snapSchedules).length ? "cached" : "error",
+        ts: Date.now(),
+        note: Object.keys(snapSchedules).length ? `Snapshot (${snap.dateStr})` : "Unavailable"
+      };
       return { channels: mapSeedChannels(seedTubi, "tubi"), schedules: snapSchedules };
     }
 
