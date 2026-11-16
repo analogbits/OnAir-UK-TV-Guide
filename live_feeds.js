@@ -765,12 +765,13 @@ const ONAIR_LIVE = (() => {
       return timeMachineMemCache.get(memKey);
     }
 
-    // Polite cap: BBC One immediately, BBC Two staggered 3s later in background (zero 429 on api.cors.lol)
+    // Polite multi-pass cap: BBC One immediately, then stagger remaining terrestrial BBC channels (4s, 9s)
+    // plus a single retry at 7s if BBC One missed on initial load (zero 429 bursts)
     const bbcChs = (channelsList || [])
-      .filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && /^bbc (one|two)\b/i.test(c.name || "") && getBbcGenomeServiceSlug(c.name, region.id))
-      .slice(0, 2);
-    const bbc1 = bbcChs[0] || null;
-    const bbc2 = bbcChs[1] || null;
+      .filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && /^bbc (one|two|four)\b/i.test(c.name || "") && getBbcGenomeServiceSlug(c.name, region.id))
+      .slice(0, 3);
+    const bbc1 = bbcChs.find((c) => /^bbc one\b/i.test(c.name || "")) || bbcChs[0] || null;
+    const bbcRest = bbcChs.filter((c) => c !== bbc1);
 
     const isLocalProxy =
       typeof location !== "undefined" &&
@@ -905,42 +906,54 @@ const ONAIR_LIVE = (() => {
     };
     if (totalEvents > 0) timeMachineMemCache.set(memKey, result);
 
-    if (bbc2 && !(tv24Map && tv24Map[normTv24ChName(bbc2.name)])) {
+    const applyBbcEvents = (ch, evs) => {
+      if (!ch || !evs || !evs.length) return false;
+      result.schedulesBySid[ch.sid] = evs.map((ev) => ({
+        id: ev.id,
+        channelId: ch.id,
+        sid: ch.sid,
+        dayOffset: 0,
+        title: ev.title,
+        genre: ch.category || "Entertainment",
+        rating: "PG",
+        ep: isoDate,
+        desc: ev.desc,
+        cast: ch.category || "TV",
+        stars: null,
+        isNew: false,
+        isRepeat: ev.isRepeat,
+        isLiveData: true,
+        thisWeek: false,
+        interests: inferInterestsFromEvent(ev.title, ev.desc, ch.category || "Entertainment"),
+        startMin: ev.startMin,
+        endMin: ev.endMin
+      }));
+      result.totalEvents = Object.values(result.schedulesBySid).reduce((sum, arr) => sum + arr.length, 0);
+      if (!result.sourceLabel.includes("BBC Genome")) {
+        result.sourceLabel = result.sourceLabel === "No archive data" ? "BBC Genome" : `BBC Genome + ${result.sourceLabel}`;
+      }
+      timeMachineMemCache.set(memKey, result);
+      if (typeof onBackgroundUpdate === "function") onBackgroundUpdate(result);
+      return true;
+    };
+
+    // Build staggered follow-up queue with large gaps (4.5s, 9.5s, 14.5s) to capture missed terrestrial BBC channels safely
+    const followUpQueue = [...bbcRest];
+    if (bbc1 && !bbcBySid[bbc1.sid] && !(tv24Map && tv24Map[normTv24ChName(bbc1.name)])) {
+      followUpQueue.push(bbc1);
+    }
+    const pendingFollowUps = followUpQueue.filter((c) => !(tv24Map && tv24Map[normTv24ChName(c.name)]));
+    pendingFollowUps.forEach((ch, idx) => {
+      const delayMs = 4500 + idx * 5000;
       setTimeout(async () => {
         try {
-          const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc2.name, region.id), isoDate).catch(() => null);
-          if (!evs || !evs.length) return;
-          result.schedulesBySid[bbc2.sid] = evs.map((ev) => ({
-            id: ev.id,
-            channelId: bbc2.id,
-            sid: bbc2.sid,
-            dayOffset: 0,
-            title: ev.title,
-            genre: bbc2.category || "Entertainment",
-            rating: "PG",
-            ep: isoDate,
-            desc: ev.desc,
-            cast: bbc2.category || "TV",
-            stars: null,
-            isNew: false,
-            isRepeat: ev.isRepeat,
-            isLiveData: true,
-            thisWeek: false,
-            interests: inferInterestsFromEvent(ev.title, ev.desc, bbc2.category || "Entertainment"),
-            startMin: ev.startMin,
-            endMin: ev.endMin
-          }));
-          result.totalEvents = Object.values(result.schedulesBySid).reduce((sum, arr) => sum + arr.length, 0);
-          if (!result.sourceLabel.includes("BBC Genome")) {
-            result.sourceLabel = `BBC Genome + ${result.sourceLabel}`;
-          }
-          timeMachineMemCache.set(memKey, result);
-          if (typeof onBackgroundUpdate === "function") onBackgroundUpdate(result);
+          const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(ch.name, region.id), isoDate).catch(() => null);
+          applyBbcEvents(ch, evs);
         } catch {
           // Ignore background failure
         }
-      }, 3000);
-    }
+      }, delayMs);
+    });
 
     return result;
   }

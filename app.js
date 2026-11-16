@@ -3399,41 +3399,46 @@
     renderDateStrip();
     renderEPG(false);
 
+    const renderTmBanner = (dataRes) => {
+      const prettyDate = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric"
+      });
+      const tv24Url = (dataRes && dataRes.tv24Url) || `https://tv24.co.uk/tv/${isoDate}`;
+      const genomeUrl = (dataRes && dataRes.genomeUrl) || `https://genome.ch.bbc.co.uk/schedules/service_bbc_one_northern_ireland/${isoDate}`;
+      const count = (dataRes && dataRes.totalEvents) || 0;
+      const src = (dataRes && dataRes.sourceLabel) || "Archive";
+      if (el.timeMachineBanner) {
+        el.timeMachineBanner.innerHTML = `
+          <div>
+            <strong>🕰️ Time Machine: ${escapeHtml(prettyDate)}</strong>
+            <span style="color:var(--text-muted); margin-left:8px;">${count} programmes (${escapeHtml(src)})</span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <a href="${escapeHtml(genomeUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">BBC Genome ↗</a>
+            <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">tv24.co.uk ↗</a>
+            <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
+          </div>
+        `;
+        const exitBtn = document.getElementById("tmExitBtn");
+        if (exitBtn) exitBtn.onclick = exitTimeMachine;
+      }
+    };
+
     const res = ONAIR_LIVE.fetchTimeMachineDay
       ? await ONAIR_LIVE.fetchTimeMachineDay(isoDate, liveChannels, (updatedRes) => {
           if (state.timeMachineDate !== isoDate) return;
           timeMachineEpg = updatedRes.schedulesBySid || {};
+          renderTmBanner(updatedRes);
           renderEPG(false);
         }).catch(() => null)
       : null;
 
     if (state.timeMachineDate !== isoDate) return;
     timeMachineEpg = (res && res.schedulesBySid) || {};
-    const prettyDate = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString("en-GB", {
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-      year: "numeric"
-    });
-    const tv24Url = (res && res.tv24Url) || `https://tv24.co.uk/tv/${isoDate}`;
-    const genomeUrl = (res && res.genomeUrl) || `https://genome.ch.bbc.co.uk/schedules/service_bbc_one_northern_ireland/${isoDate}`;
-    const count = (res && res.totalEvents) || 0;
-    const src = (res && res.sourceLabel) || "Archive";
-    if (el.timeMachineBanner) {
-      el.timeMachineBanner.innerHTML = `
-        <div>
-          <strong>🕰️ Time Machine: ${escapeHtml(prettyDate)}</strong>
-          <span style="color:var(--text-muted); margin-left:8px;">${count} programmes (${escapeHtml(src)})</span>
-        </div>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <a href="${escapeHtml(genomeUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">BBC Genome ↗</a>
-          <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">tv24.co.uk ↗</a>
-          <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
-        </div>
-      `;
-      const exitBtn = document.getElementById("tmExitBtn");
-      if (exitBtn) exitBtn.onclick = exitTimeMachine;
-    }
+    renderTmBanner(res);
     renderEPG(false);
   }
 
