@@ -1248,11 +1248,39 @@
       })
       .sort((a, b) => b.score - a.score || (Number(b.item.rating) || 0) - (Number(a.item.rating) || 0) || (Number(b.item.year) || 0) - (Number(a.item.year) || 0));
 
-    const pool = scored.slice(0, Math.min(20, scored.length)).map((x) => x.item);
-    if (!pool.length) return [];
-    const offset = weekIndex % pool.length;
-    const rotated = [...pool.slice(offset), ...pool.slice(0, offset)];
-    return rotated.slice(0, Math.min(count, rotated.length));
+    const rotateSlice = (arr, poolSize, take) => {
+      if (!arr.length) return [];
+      const p = arr.slice(0, Math.min(poolSize, arr.length)).map((x) => x.item);
+      const off = weekIndex % p.length;
+      const rot = [...p.slice(off), ...p.slice(0, off)];
+      return rot.slice(0, Math.min(take, rot.length));
+    };
+
+    const fiveStars = scored.filter((x) => (Number(x.item.rating) || 0) >= 4.8);
+    const fourStars = scored.filter((x) => {
+      const r = Number(x.item.rating) || 0;
+      return r >= 4 && r < 4.8;
+    });
+
+    const fivePick = rotateSlice(fiveStars, 15, Math.ceil(count / 2));
+    const fourPick = rotateSlice(fourStars, 15, Math.floor(count / 2));
+    const mixed = [];
+    const maxLen = Math.max(fivePick.length, fourPick.length);
+    for (let i = 0; i < maxLen && mixed.length < count; i++) {
+      if (fivePick[i]) mixed.push(fivePick[i]);
+      if (fourPick[i] && mixed.length < count) mixed.push(fourPick[i]);
+    }
+    if (mixed.length < count) {
+      const seen = new Set(mixed.map((m) => m.id));
+      for (const x of scored) {
+        if (!seen.has(x.item.id)) {
+          mixed.push(x.item);
+          seen.add(x.item.id);
+          if (mixed.length >= count) break;
+        }
+      }
+    }
+    return mixed;
   }
 
   function renderStreamingHeroSlide(picks) {
