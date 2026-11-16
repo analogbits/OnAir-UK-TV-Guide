@@ -1853,7 +1853,7 @@ const ONAIR_LIVE = (() => {
         showLinkCache.set(key, null);
         return null;
       }
-      if (!stored.imdbId || stored.rtSlug !== undefined) {
+      if ((!stored.imdbId || stored.rtSlug !== undefined) && stored.castList !== undefined) {
         showLinkCache.set(key, stored);
         return stored;
       }
@@ -1866,15 +1866,44 @@ const ONAIR_LIVE = (() => {
       let score10 = stored ? stored.score10 : null;
       let image = stored ? stored.image : null;
       let rating = stored ? stored.rating : null;
+      let castList = stored && Array.isArray(stored.castList) ? stored.castList : null;
+      let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : null;
 
-      if (!stored || (!imdbId && !tvmazeUrl)) {
-        const data = await fetchJson(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(clean)}`);
-        directUrl = normalizeDirectUrl(data.officialSite || data.url || null);
-        tvmazeUrl = data.url || null;
-        imdbId = data.externals && data.externals.imdb ? data.externals.imdb : null;
-        score10 = data.rating && data.rating.average ? data.rating.average : null;
-        image = data.image ? data.image.medium : null;
-        rating = score10 ? Math.min(5, Math.max(3, Math.round(score10 / 2))) : null;
+      if (!stored || (!imdbId && !tvmazeUrl) || castList === null) {
+        const data = await fetchJson(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(clean)}&embed%5B%5D=cast&embed%5B%5D=crew`);
+        directUrl = directUrl || normalizeDirectUrl(data.officialSite || data.url || null);
+        tvmazeUrl = tvmazeUrl || data.url || null;
+        imdbId = imdbId || (data.externals && data.externals.imdb ? data.externals.imdb : null);
+        score10 = score10 || (data.rating && data.rating.average ? data.rating.average : null);
+        image = image || (data.image ? data.image.medium : null);
+        rating = rating || (score10 ? Math.min(5, Math.max(3, Math.round(score10 / 2))) : null);
+        const emb = data._embedded || {};
+        castList = (Array.isArray(emb.cast) ? emb.cast : [])
+          .slice(0, 6)
+          .map((c) => {
+            const actor = c && c.person && c.person.name ? c.person.name.trim() : "";
+            const role = c && c.character && c.character.name ? c.character.name.trim() : "";
+            if (!actor) return "";
+            return role ? `${actor} (${role})` : actor;
+          })
+          .filter(Boolean);
+        const crewPriority = { Creator: 1, Showrunner: 2, Director: 3, Writer: 4, "Executive Producer": 5 };
+        const rawCrew = (Array.isArray(emb.crew) ? emb.crew : [])
+          .map((c) => ({
+            name: c && c.person && c.person.name ? c.person.name.trim() : "",
+            type: c && c.type ? String(c.type).trim() : "",
+            prio: crewPriority[c && c.type] || 99
+          }))
+          .filter((c) => c.name)
+          .sort((a, b) => a.prio - b.prio);
+        const seenCrew = new Set();
+        crewList = [];
+        for (const c of rawCrew) {
+          if (seenCrew.has(c.name)) continue;
+          seenCrew.add(c.name);
+          crewList.push(c.type ? `${c.name} (${c.type})` : c.name);
+          if (crewList.length >= 4) break;
+        }
       }
 
       let rtSlug = stored && stored.rtSlug ? stored.rtSlug : null;
@@ -1899,6 +1928,8 @@ const ONAIR_LIVE = (() => {
         score10,
         image,
         rating,
+        castList: castList || [],
+        crewList: crewList || [],
         savedAt: Date.now()
       };
       showLinkCache.set(key, resolved);

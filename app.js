@@ -2028,6 +2028,18 @@
           headerWrap.prepend(img);
         }
       }
+      if (Array.isArray(resolved.castList) && resolved.castList.length) {
+        const castEl = document.getElementById("modalCastValue");
+        if (castEl) castEl.textContent = resolved.castList.join(", ");
+      }
+      if (Array.isArray(resolved.crewList) && resolved.crewList.length) {
+        const crewWrap = document.getElementById("modalCrewWrap");
+        const crewEl = document.getElementById("modalCrewValue");
+        if (crewWrap && crewEl) {
+          crewEl.textContent = resolved.crewList.join(", ");
+          crewWrap.style.display = "";
+        }
+      }
     });
   }
 
@@ -2071,11 +2083,15 @@
       <div class="modal-info-grid">
         <div>
           <span class="info-label">Cast / Genres</span>
-          <span>${prog.cast}</span>
+          <span id="modalCastValue">${prog.cast}</span>
         </div>
         <div>
           <span class="info-label">Catch-Up &amp; Broadcast</span>
           <span>${ch.name} &bull; <strong>${ch.catchup}</strong></span>
+        </div>
+        <div id="modalCrewWrap" style="display:none; grid-column:1/-1;">
+          <span class="info-label">Crew</span>
+          <span id="modalCrewValue"></span>
         </div>
       </div>
       ${renderWhereToWatchBlock(prog.title, ch.catchup, prog.officialSite, isLive ? { isLive: true, liveUrl, channelName: ch.name } : null)}
@@ -2150,11 +2166,15 @@
       <div class="modal-info-grid">
         <div>
           <span class="info-label">Starring / Genres</span>
-          <span>${item.cast}</span>
+          <span id="modalCastValue">${item.cast}</span>
         </div>
         <div>
           <span class="info-label">Primary Platform</span>
           <span>Streaming on <strong>${item.platform}</strong></span>
+        </div>
+        <div id="modalCrewWrap" style="display:none; grid-column:1/-1;">
+          <span class="info-label">Crew</span>
+          <span id="modalCrewValue"></span>
         </div>
       </div>
       ${renderWhereToWatchBlock(item.title, item.platform, item.officialSite)}
