@@ -1226,16 +1226,21 @@
         .map((h) => String((h.prog && h.prog.title) || "").toLowerCase().trim())
         .filter(Boolean)
     );
+    const whatsNewText = (Array.isArray(liveFeedItems) ? liveFeedItems : [])
+      .map((f) => `${f.title || ""} ${f.description || ""}`.toLowerCase())
+      .join(" \n ");
     const season = typeof getActiveSeason === "function" ? getActiveSeason() : null;
     const highRated = catalogue.filter((item) => (Number(item.rating) || 0) >= 4);
     const sourceList = highRated.length >= count ? highRated : catalogue;
     const scored = sourceList
       .map((item) => {
         const rating = Number(item.rating) || 3.5;
+        const cleanTitle = String(item.title || "").toLowerCase().trim();
         let score = rating * 30;
         if (item.isLiveData) score += 18;
         if (item.thisWeek) score += 15;
-        if (tvTitles.has(String(item.title || "").toLowerCase().trim())) score += 12;
+        if (tvTitles.has(cleanTitle)) score += 12;
+        if (cleanTitle.length >= 4 && whatsNewText.includes(cleanTitle)) score += 20;
         if (season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`)) {
           score += 8;
         }
@@ -1317,7 +1322,7 @@
       if (weeklyPickTimer) clearInterval(weeklyPickTimer);
       weeklyPickTimer = setInterval(() => {
         if (weeklyPickPaused) return;
-        const streamingSec = document.getElementById("tab-streaming");
+        const streamingSec = document.getElementById("view-streaming");
         if (streamingSec && !streamingSec.classList.contains("is-active")) return;
         weeklyPickIndex = (weeklyPickIndex + 1) % weeklyPicks.length;
         renderStreamingHeroSlide(weeklyPicks);
