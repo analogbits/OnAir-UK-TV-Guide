@@ -244,6 +244,10 @@
   };
 
   // Helpers
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
   function getBroadcastStatus(prog) {
     if (!prog) return "";
     const title = prog.title || "";
@@ -3307,10 +3311,6 @@
       el.globalSearch.value = stripped || q;
       runSearch(stripped || q);
       addMsg("bot", `Opened full Search across -7d..+6d, Show Vault &amp; UK On-Demand for <strong>"${escapeHtml(stripped || q)}"</strong>.`);
-    }
-
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
 
     const prompts = [
