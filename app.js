@@ -522,6 +522,18 @@
   function renderCategoryPills() {
     const season = getActiveSeason();
     const cats = [...CHANNEL_CATEGORIES.slice(0, 2), { id: "Seasonal", label: season.chip }, ...CHANNEL_CATEGORIES.slice(2)];
+    const modeBtn = document.getElementById("guideModeToggleBtn");
+    if (modeBtn) {
+      const isSeasonal = state.epgCategory === "Seasonal";
+      modeBtn.textContent = isSeasonal ? `${season.chip} (Seasonal)` : "📺 Normal";
+      modeBtn.style.borderColor = isSeasonal ? "var(--accent)" : "";
+      modeBtn.style.color = isSeasonal ? "var(--accent)" : "";
+      modeBtn.onclick = () => {
+        state.epgCategory = state.epgCategory === "Seasonal" ? "All" : "Seasonal";
+        renderCategoryPills();
+        renderEPG(true);
+      };
+    }
     el.epgCategoryPills.innerHTML = cats
       .map((item) => {
         const id = typeof item === "string" ? item : item.id;
@@ -3787,11 +3799,48 @@
       fiveYrAgo.setFullYear(now.getFullYear() - 5);
       const fmtIso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 
-      const xmasYear = now.getMonth() === 11 && now.getDate() > 26 ? now.getFullYear() + 1 : now.getFullYear();
+      const activeSeason = getActiveSeason();
+      const yNow = now.getFullYear();
+      const seasonalPresetsById = {
+        christmas: [
+          { label: "🎄 Xmas Eve", iso: `${now.getMonth() === 11 && now.getDate() > 26 ? yNow + 1 : yNow}-12-24` },
+          { label: "🎄 Xmas Day", iso: `${now.getMonth() === 11 && now.getDate() > 26 ? yNow + 1 : yNow}-12-25` },
+          { label: "🎄 Boxing Day", iso: `${now.getMonth() === 11 && now.getDate() > 26 ? yNow + 1 : yNow}-12-26` }
+        ],
+        winter: [
+          { label: "🎆 New Year's Day", iso: `${yNow}-01-01` },
+          { label: "❄️ Winter Specials", iso: `${yNow}-01-15` },
+          { label: "🎄 Last Xmas Day", iso: `${yNow - 1}-12-25` }
+        ],
+        romance: [
+          { label: "💘 Valentine's Day", iso: `${yNow}-02-14` },
+          { label: "💘 Valentine's Eve", iso: `${yNow}-02-13` },
+          { label: "🎄 Last Xmas Day", iso: `${yNow - 1}-12-25` }
+        ],
+        easter: [
+          { label: "🐣 Easter Weekend", iso: `${yNow}-04-05` },
+          { label: "🐣 Spring Bank", iso: `${yNow}-04-12` },
+          { label: "🎄 Last Xmas Day", iso: `${yNow - 1}-12-25` }
+        ],
+        summer: [
+          { label: "☀️ Summer Solstice", iso: `${yNow}-06-21` },
+          { label: "🏆 July Finals", iso: `${yNow}-07-14` },
+          { label: "☀️ Aug Bank Hol", iso: `${yNow}-08-25` }
+        ],
+        autumn: [
+          { label: "🍂 Autumn Equinox", iso: `${yNow}-09-22` },
+          { label: "🍂 Oct Premieres", iso: `${yNow}-10-01` },
+          { label: "🎃 Last Halloween", iso: `${yNow - 1}-10-31` }
+        ],
+        halloween: [
+          { label: "🎃 Halloween", iso: `${yNow}-10-31` },
+          { label: "🎃 Fright Night", iso: `${yNow}-10-30` },
+          { label: "🎆 Bonfire Night", iso: `${yNow}-11-05` }
+        ]
+      };
+      const seasonChips = seasonalPresetsById[activeSeason.id] || seasonalPresetsById.christmas;
       const presets = [
-        { label: `🎄 Xmas Eve`, iso: `${xmasYear}-12-24` },
-        { label: `🎄 Xmas Day`, iso: `${xmasYear}-12-25` },
-        { label: `🎄 Boxing Day`, iso: `${xmasYear}-12-26` },
+        ...seasonChips,
         { label: "1 Year Ago", iso: fmtIso(oneYrAgo) },
         { label: "5 Years Ago", iso: fmtIso(fiveYrAgo) },
         { label: "27 May 2020", iso: "2020-05-27" },
