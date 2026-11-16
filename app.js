@@ -899,7 +899,7 @@
 
     const cardsHtml =
       topPicks.length > 0
-        ? topPicks.map(({ prog, channel }) => buildSeasonalTvCard(prog, channel, dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin)).join("")
+        ? topPicks.map(({ prog, channel }) => renderTvPickCard({ kind: "tv", prog, channel })).join("")
         : `<div class="empty-state" style="grid-column:1/-1; padding:26px;">${
             missingCount > 0
               ? `Loading ${escapeHtml(dayHeading)} schedules...`
@@ -932,7 +932,7 @@
     });
     container.querySelectorAll("[data-prog-id]").forEach((card) => {
       card.onclick = () => {
-        const ch = liveChannels.find((c) => c.id === card.dataset.chId);
+        const ch = liveChannels.find((c) => c.id === card.dataset.channelId);
         const progs = (liveEpgByDay.get(dayOffset) || {})[ch && ch.sid] || [];
         const p = progs.find((ev) => String(ev.id) === String(card.dataset.progId));
         if (p && ch) openProgrammeModal(p, ch, dayOffset);
