@@ -3783,12 +3783,14 @@
       fiveYrAgo.setFullYear(now.getFullYear() - 5);
       const fmtIso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 
+      const xmasYear = now.getMonth() === 11 && now.getDate() > 26 ? now.getFullYear() + 1 : now.getFullYear();
       const presets = [
+        { label: `🎄 Xmas Eve`, iso: `${xmasYear}-12-24` },
+        { label: `🎄 Xmas Day`, iso: `${xmasYear}-12-25` },
+        { label: `🎄 Boxing Day`, iso: `${xmasYear}-12-26` },
         { label: "1 Year Ago", iso: fmtIso(oneYrAgo) },
         { label: "5 Years Ago", iso: fmtIso(fiveYrAgo) },
         { label: "27 May 2020", iso: "2020-05-27" },
-        { label: "27 Jul 2012", iso: "2012-07-27" },
-        { label: "Xmas 2015", iso: "2015-12-25" },
         { label: "Live (Today)", iso: "" }
       ];
 

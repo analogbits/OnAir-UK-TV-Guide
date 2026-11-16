@@ -914,12 +914,69 @@ const ONAIR_LIVE = (() => {
       (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1");
 
     const customProxy = getCustomProxyPrefix();
-    const [tv24Map, tvmGbList, tvmIeList, bbc1Res] = await Promise.all([
+    const todayIso = getIsoDateString(0);
+    const isFutureDate = isoDate > todayIso;
+    const skyDateCompact = isoDate.replace(/-/g, "");
+    const futureDayStartSec = Math.floor(Date.parse(`${isoDate}T00:00:00Z`) / 1000);
+
+    // For future dates (e.g. Christmas schedules), also probe Sky EPG, Freeview UK, and TVMaze Web/Streaming drops
+    const futureSkySids = isFutureDate
+      ? (channelsList || []).filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId).slice(0, 32).map((c) => c.sid)
+      : [];
+    const skyFuturePromise = futureSkySids.length
+      ? Promise.all([
+          fetchJson(`https://awk.epgsky.com/hawk/linear/schedule/${skyDateCompact}/${futureSkySids.slice(0, 16).join(",")}`).catch(() => ({ schedule: [] })),
+          futureSkySids.length > 16
+            ? fetchJson(`https://awk.epgsky.com/hawk/linear/schedule/${skyDateCompact}/${futureSkySids.slice(16, 32).join(",")}`).catch(() => ({ schedule: [] }))
+            : Promise.resolve({ schedule: [] })
+        ])
+      : Promise.resolve([]);
+
+    const freeviewFuturePromise = isFutureDate && (isLocalProxy || customProxy)
+      ? (async () => {
+          const fvUrl = `https://www.freeview.co.uk/api/tv-guide?nid=64257&start=${futureDayStartSec}`;
+          for (const url of buildProxyUrls(fvUrl, false).slice(0, 2)) {
+            try {
+              const r = await fetchJson(url, 8000);
+              if (r && r.data && Array.isArray(r.data.programs) && r.data.programs.length) {
+                const byCh = {};
+                r.data.programs.forEach((chObj) => {
+                  const nk = normTv24ChName(chObj.title);
+                  if (nk && Array.isArray(chObj.events) && chObj.events.length) byCh[nk] = chObj.events;
+                });
+                return byCh;
+              }
+            } catch {
+              // Ignore
+            }
+          }
+          return null;
+        })()
+      : Promise.resolve(null);
+
+    const tvmWebPromise = isFutureDate
+      ? fetchJson(`https://api.tvmaze.com/schedule/web?date=${isoDate}`).catch(() => [])
+      : Promise.resolve([]);
+
+    const [tv24Map, tvmGbList, tvmIeList, bbc1Res, skyFutureResps, fvFutureMap, tvmWebList] = await Promise.all([
       fetchTv24DayMap(isoDate, !(isLocalProxy || customProxy)).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
-      bbc1 ? fetchBbcGenomeAcrossRegions(bbc1.name, region.id, isoDate).catch(() => null) : Promise.resolve(null)
+      bbc1 ? fetchBbcGenomeAcrossRegions(bbc1.name, region.id, isoDate).catch(() => null) : Promise.resolve(null),
+      skyFuturePromise,
+      freeviewFuturePromise,
+      tvmWebPromise
     ]);
+
+    const skyFutureBySid = {};
+    (Array.isArray(skyFutureResps) ? skyFutureResps : []).forEach((resp) => {
+      (resp && resp.schedule ? resp.schedule : []).forEach((chSched) => {
+        if (chSched && chSched.sid && Array.isArray(chSched.events) && chSched.events.length) {
+          skyFutureBySid[chSched.sid] = chSched.events;
+        }
+      });
+    });
+
     const bbc1Events = bbc1Res ? bbc1Res.events : null;
     const bbcBySid = {};
     if (bbc1 && !lookupTv24Events(tv24Map, bbc1.name) && bbc1Events && bbc1Events.length) {
@@ -927,19 +984,106 @@ const ONAIR_LIVE = (() => {
     }
     const tvmList = [
       ...(Array.isArray(tvmGbList) ? tvmGbList : []),
-      ...(Array.isArray(tvmIeList) ? tvmIeList : [])
+      ...(Array.isArray(tvmIeList) ? tvmIeList : []),
+      ...(Array.isArray(tvmWebList) ? tvmWebList : [])
     ];
 
     const schedulesBySid = {};
     let totalEvents = 0;
     const sources = [];
+    if (Object.keys(skyFutureBySid).length) sources.push("Sky EPG");
+    if (fvFutureMap) sources.push("Freeview");
     if (tv24Map) sources.push("tv24.co.uk");
     if (Object.keys(bbcBySid).length) sources.push("BBC Genome");
     if (Array.isArray(tvmGbList) && tvmGbList.length) sources.push("TVMaze UK");
     if (Array.isArray(tvmIeList) && tvmIeList.length) sources.push("TVMaze IE");
+    if (Array.isArray(tvmWebList) && tvmWebList.length) sources.push("TVMaze Streaming");
 
     (channelsList || []).forEach((ch) => {
       if (!ch || !ch.sid || ch.plutoSlug || ch.tubiId) return;
+      if (skyFutureBySid[ch.sid] && skyFutureBySid[ch.sid].length) {
+        const mappedSky = skyFutureBySid[ch.sid]
+          .map((ev) => {
+            const startMin = Math.floor((ev.st - futureDayStartSec) / 60);
+            const endMin = Math.floor((ev.st + ev.d - futureDayStartSec) / 60);
+            if (endMin <= 360 || startMin >= 24 * 60) return null;
+            const clampedStart = Math.max(360, startMin);
+            const clampedEnd = Math.min(24 * 60, endMin);
+            if (clampedEnd <= clampedStart) return null;
+            return {
+              id: `tm-sky-${ev.eid || `${ch.sid}-${ev.st}`}`,
+              channelId: ch.id,
+              sid: ch.sid,
+              dayOffset: 0,
+              title: ev.t || "Untitled",
+              genre: classifyProgrammeGenre(ev, ch.category),
+              rating: ev.r && ev.r !== "--" ? ev.r : "PG",
+              ep: ev.seasonnumber && ev.episodenumber ? `Series ${ev.seasonnumber}, Ep ${ev.episodenumber}` : isoDate,
+              desc: ev.sy || `Scheduled broadcast on ${ch.name} (${isoDate}).`,
+              cast: ch.category || "TV",
+              stars: null,
+              isNew: Boolean(ev.new),
+              isRepeat: /\(R\)|\brepeat\b/i.test(ev.sy || ""),
+              isLiveData: true,
+              thisWeek: false,
+              interests: inferInterestsFromEvent(ev.t || "", ev.sy || "", ch.category || "Entertainment"),
+              startMin: clampedStart,
+              endMin: clampedEnd
+            };
+          })
+          .filter(Boolean);
+        if (mappedSky.length) {
+          schedulesBySid[ch.sid] = mappedSky;
+          totalEvents += mappedSky.length;
+          return;
+        }
+      }
+      if (fvFutureMap) {
+        const nkFv = normTv24ChName(ch.name);
+        const fvEvs = fvFutureMap[nkFv] || fvFutureMap[nkFv.replace(/1$/, "")];
+        if (fvEvs && fvEvs.length) {
+          const mappedFv = fvEvs
+            .map((ev, idx) => {
+              const stMs = Date.parse(ev.start_time);
+              if (Number.isNaN(stMs)) return null;
+              const startMin = Math.floor((stMs / 1000 - futureDayStartSec) / 60);
+              const hm = (ev.duration || "").match(/(\d+)H/);
+              const mm = (ev.duration || "").match(/(\d+)M/);
+              const durMin = (hm ? Number(hm[1]) * 60 : 0) + (mm ? Number(mm[1]) : 0) || 30;
+              const endMin = startMin + durMin;
+              if (endMin <= 360 || startMin >= 24 * 60) return null;
+              const clampedStart = Math.max(360, startMin);
+              const clampedEnd = Math.min(24 * 60, endMin);
+              if (clampedEnd <= clampedStart) return null;
+              return {
+                id: `tm-fv-${ev.uuid || `${ch.sid}-${idx}`}`,
+                channelId: ch.id,
+                sid: ch.sid,
+                dayOffset: 0,
+                title: ev.main_title || "Untitled",
+                genre: ch.category || "Entertainment",
+                rating: "PG",
+                ep: ev.secondary_title || isoDate,
+                desc: ev.secondary_title ? `${ev.main_title}: ${ev.secondary_title}` : `Scheduled on ${ch.name} (${isoDate}).`,
+                cast: ch.category || "TV",
+                stars: null,
+                isNew: false,
+                isRepeat: false,
+                isLiveData: true,
+                thisWeek: false,
+                interests: inferInterestsFromEvent(ev.main_title || "", ev.secondary_title || "", ch.category || "Entertainment"),
+                startMin: clampedStart,
+                endMin: clampedEnd
+              };
+            })
+            .filter(Boolean);
+          if (mappedFv.length) {
+            schedulesBySid[ch.sid] = mappedFv;
+            totalEvents += mappedFv.length;
+            return;
+          }
+        }
+      }
       if (bbcBySid[ch.sid] && bbcBySid[ch.sid].length) {
         schedulesBySid[ch.sid] = bbcBySid[ch.sid].map((ev) => ({
           id: ev.id,
