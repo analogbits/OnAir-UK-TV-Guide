@@ -763,8 +763,12 @@ const ONAIR_LIVE = (() => {
       .filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && /^bbc (one|two)\b/i.test(c.name || "") && getBbcGenomeServiceSlug(c.name, region.id))
       .slice(0, 2);
 
+    const isLocalProxy =
+      typeof location !== "undefined" &&
+      (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1");
+
     const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
-      fetchTv24DayMap(isoDate).catch(() => null),
+      isLocalProxy ? fetchTv24DayMap(isoDate).catch(() => null) : Promise.resolve(null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
     ]);
@@ -772,7 +776,7 @@ const ONAIR_LIVE = (() => {
     for (let i = 0; i < bbcChs.length; i++) {
       const c = bbcChs[i];
       if (tv24Map && tv24Map[normTv24ChName(c.name)]) continue;
-      if (i > 0) await new Promise((r) => setTimeout(r, 350));
+      if (i > 0) await new Promise((r) => setTimeout(r, 1200));
       const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null);
       if (evs && evs.length) bbcBySid[c.sid] = evs;
     }
