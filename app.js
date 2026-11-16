@@ -37,6 +37,8 @@
     lowDataMode: localStorage.getItem("onair_low_data") === "1",
     seasonOverride: localStorage.getItem("onair_season_override") || "auto",
     seasonalSourceFilter: "all",
+    wtwAheadDayOffset: 0,
+    wtwAheadFilter: "All",
     timeMachineDate: null
   };
   let timeMachineEpg = null;
@@ -804,7 +806,142 @@
     `;
   }
 
+  const wtwAheadFetchingDays = new Set();
+
+  function renderWatchAheadSection() {
+    const container = document.getElementById("wtwWatchAhead");
+    if (!container) return;
+
+    const dayOffset = Math.max(0, Math.min(6, Number(state.wtwAheadDayOffset) || 0));
+    const filter = state.wtwAheadFilter || "All";
+    const platformChannels = liveChannels.filter(
+      (c) => !c.plutoSlug && !c.tubiId && (c.numbers[state.platform] !== null || state.platform === "pluto" || state.platform === "tubi")
+    );
+    const topChannels = (platformChannels.length ? platformChannels : liveChannels.filter((c) => !c.plutoSlug && !c.tubiId)).slice(0, 36);
+
+    const dayMap = liveEpgByDay.get(dayOffset) || {};
+    const missingCount = topChannels.filter((c) => c.sid && !dayMap[c.sid]).length;
+    if (missingCount > 0 && !wtwAheadFetchingDays.has(dayOffset)) {
+      wtwAheadFetchingDays.add(dayOffset);
+      ensureSchedulesForChannels(topChannels, dayOffset, false)
+        .finally(() => wtwAheadFetchingDays.delete(dayOffset));
+    }
+
+    const dayPills = Array.from({ length: 7 }, (_, d) => {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + d);
+      const lbl =
+        d === 0
+          ? "Today"
+          : d === 1
+          ? "Tomorrow"
+          : dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+      return `<button class="pill-btn ${dayOffset === d ? "is-active" : ""}" data-ahead-day="${d}" type="button">${lbl}</button>`;
+    }).join("");
+
+    const filterOptions = [
+      { id: "All", label: "All Picks" },
+      { id: "New", label: "✨ New & Premieres" },
+      { id: "Film", label: "🎬 Films" },
+      { id: "Drama", label: "🎭 Drama" },
+      { id: "Sport", label: "⚽ Sport" },
+      { id: "Documentary", label: "🌍 Docs" },
+      { id: "Entertainment", label: "📺 Entertainment" }
+    ];
+    const filterPills = filterOptions
+      .map((f) => `<button class="pill-btn ${filter === f.id ? "is-active" : ""}" data-ahead-filter="${f.id}" type="button">${f.label}</button>`)
+      .join("");
+
+    const nowMin = dayOffset === 0 ? getNowMinutes() : 360;
+    const candidates = [];
+    const seenTitles = new Set();
+    const flagshipRe = /^(bbc one|bbc two|itv1|utv|stv|channel 4|5\b|rt[eé]|tg4|virgin one|bbc four|film4|sky showcase|sky atlantic|sky premiere|sky sports main)/i;
+    const fillerRe = /\b(bbc news|itv news|channel 4 news|5 news|weather|breakfast|teleshopping|nightscreen|cbbc|cbeebies|milkshake|homes under the hammer|bargain hunt|cash in the attic)\b/i;
+
+    topChannels.forEach((ch) => {
+      const progs = dayMap[ch.sid] || [];
+      progs.forEach((p) => {
+        if (dayOffset === 0 && p.endMin <= nowMin) return;
+        if (!p.title || fillerRe.test(p.title) || p.genre === "News" || p.genre === "Kids") return;
+        const dur = p.endMin - p.startMin;
+        if (dur < 25) return;
+
+        if (filter === "New" && !p.isNew && !/^New:/i.test(p.title)) return;
+        else if (filter !== "All" && filter !== "New" && p.genre !== filter) return;
+
+        const tKey = p.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (seenTitles.has(tKey)) return;
+        seenTitles.add(tKey);
+
+        let score = 0;
+        if (p.isNew || /^New:/i.test(p.title)) score += 50;
+        if (p.startMin >= 19 * 60 && p.startMin <= 22 * 60 + 45) score += 30;
+        else if (p.startMin >= 17 * 60 && p.startMin < 19 * 60) score += 12;
+        if (flagshipRe.test(ch.name)) score += 25;
+        if (p.genre === "Film" || p.genre === "Drama" || p.genre === "Sport") score += 15;
+        if (dur >= 55) score += 8;
+
+        candidates.push({ prog: p, channel: ch, score });
+      });
+    });
+
+    candidates.sort((a, b) => b.score - a.score || a.prog.startMin - b.prog.startMin);
+    const topPicks = candidates.slice(0, 12);
+
+    const pickedDate = new Date();
+    pickedDate.setDate(pickedDate.getDate() + dayOffset);
+    const dayHeading =
+      dayOffset === 0
+        ? "Today's Pick of the Day"
+        : dayOffset === 1
+        ? "Tomorrow's Picks"
+        : `Watch Ahead — ${pickedDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}`;
+
+    const cardsHtml =
+      topPicks.length > 0
+        ? topPicks.map(({ prog, channel }) => buildSeasonalTvCard(prog, channel, dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin)).join("")
+        : `<div class="empty-state" style="grid-column:1/-1; padding:26px;">${
+            missingCount > 0
+              ? `Loading ${escapeHtml(dayHeading)} schedules...`
+              : `No matching picks found for this filter on ${escapeHtml(dayHeading)}. Try "All Picks".`
+          }</div>`;
+
+    container.innerHTML = `
+      <div class="section-header-row" style="margin-bottom:10px;">
+        <div>
+          <h2 class="editorial-heading" style="font-size:24px;">📅 ${escapeHtml(dayHeading)}</h2>
+          <p class="section-subtitle">Radio Times &amp; TV Times style daily picks across your ${escapeHtml((ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().short) || "UK")} channels</p>
+        </div>
+        <div class="filter-pills" style="flex-wrap:wrap;">${dayPills}</div>
+      </div>
+      <div class="filter-pills" style="margin-bottom:16px; flex-wrap:wrap;">${filterPills}</div>
+      <div class="cards-grid">${cardsHtml}</div>
+    `;
+
+    container.querySelectorAll("[data-ahead-day]").forEach((btn) => {
+      btn.onclick = () => {
+        state.wtwAheadDayOffset = Number(btn.dataset.aheadDay);
+        renderWatchAheadSection();
+      };
+    });
+    container.querySelectorAll("[data-ahead-filter]").forEach((btn) => {
+      btn.onclick = () => {
+        state.wtwAheadFilter = btn.dataset.aheadFilter;
+        renderWatchAheadSection();
+      };
+    });
+    container.querySelectorAll("[data-prog-id]").forEach((card) => {
+      card.onclick = () => {
+        const ch = liveChannels.find((c) => c.id === card.dataset.chId);
+        const progs = (liveEpgByDay.get(dayOffset) || {})[ch && ch.sid] || [];
+        const p = progs.find((ev) => String(ev.id) === String(card.dataset.progId));
+        if (p && ch) openProgrammeModal(p, ch, dayOffset);
+      };
+    });
+  }
+
   function renderWhatToWatch() {
+    renderWatchAheadSection();
     const catalogue = getMergedCatalogue();
     const tvPicks = collectTvHighlights();
 
