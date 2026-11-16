@@ -635,9 +635,11 @@ select {
 .tm-popover {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
+  right: auto;
   z-index: 90;
   width: 300px;
+  max-width: calc(100vw - 24px);
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -844,9 +846,11 @@ select {
 .tm-popover {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
+  right: auto;
   z-index: 90;
   width: 300px;
+  max-width: calc(100vw - 24px);
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
@@ -2345,9 +2349,11 @@ select {
 .tm-popover {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
+  right: auto;
   z-index: 90;
   width: 300px;
+  max-width: calc(100vw - 24px);
   background: var(--bg-surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);

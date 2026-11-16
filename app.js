@@ -3557,6 +3557,14 @@
           }
         }
         renderCalendar();
+        const btnRect = el.timeMachineBtn.getBoundingClientRect();
+        if (btnRect.left + 312 > window.innerWidth) {
+          el.tmPopover.style.left = "auto";
+          el.tmPopover.style.right = "0";
+        } else {
+          el.tmPopover.style.left = "0";
+          el.tmPopover.style.right = "auto";
+        }
         el.tmPopover.classList.remove("hidden");
         el.timeMachineBtn.setAttribute("aria-expanded", "true");
       } else {
