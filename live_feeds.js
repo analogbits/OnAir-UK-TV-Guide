@@ -1839,10 +1839,13 @@ const ONAIR_LIVE = (() => {
       const hits = sRes && sRes.query && sRes.query.search;
       if (!Array.isArray(hits) || !hits.length) return null;
       const pageTitle = hits[0].title;
-      const pUrl = `https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=text&section=0&format=json&origin=*`;
-      const pRes = await fetchJson(pUrl, 5000);
+      const [pRes, sumRes] = await Promise.all([
+        fetchJson(`https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=text&section=0&format=json&origin=*`, 5000),
+        fetchJson(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(pageTitle.replace(/ /g, "_"))}`, 4000).catch(() => null)
+      ]);
       const html = (pRes && pRes.parse && pRes.parse.text && pRes.parse.text["*"]) || "";
-      if (!html) return null;
+      const wikiSummary = sumRes && sumRes.extract ? String(sumRes.extract).trim() : "";
+      if (!html && !wikiSummary) return null;
 
       const extractRow = (labelRegex) => {
         const re = new RegExp(`<th[^>]*>[\\s\\S]*?${labelRegex}[\\s\\S]*?<\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, "i");
@@ -1884,8 +1887,8 @@ const ONAIR_LIVE = (() => {
         extractRow(re).slice(0, 2).forEach((n) => crew.push(`${n} (${role})`));
       });
 
-      if (!cast.length && !crew.length) return null;
-      return { castList: cast.slice(0, 6), crewList: crew.slice(0, 5) };
+      if (!cast.length && !crew.length && !wikiSummary) return null;
+      return { castList: cast.slice(0, 6), crewList: crew.slice(0, 5), summary: wikiSummary };
     } catch {
       return null;
     }
@@ -1930,6 +1933,7 @@ const ONAIR_LIVE = (() => {
       let image = stored ? stored.image : null;
       let rating = stored ? stored.rating : null;
       let rtSlug = stored && stored.rtSlug ? stored.rtSlug : null;
+      let summary = stored && stored.summary ? stored.summary : "";
       let castList = stored && Array.isArray(stored.castList) ? stored.castList : [];
       let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : [];
 
@@ -1940,6 +1944,9 @@ const ONAIR_LIVE = (() => {
         score10 = score10 || (data.rating && data.rating.average ? data.rating.average : null);
         image = image || (data.image ? data.image.medium : null);
         rating = rating || (score10 ? Math.min(5, Math.max(3, Math.round(score10 / 2))) : null);
+        if (!summary && data.summary) {
+          summary = String(data.summary).replace(/<[^>]+>/g, "").trim();
+        }
         const emb = data._embedded || {};
         if (!castList.length) {
           castList = (Array.isArray(emb.cast) ? emb.cast : [])
@@ -1993,11 +2000,12 @@ const ONAIR_LIVE = (() => {
       }
 
       // Tier 3: Wikipedia Infobox failover (works for movies, documentaries, panel shows & TV)
-      if (!castList.length || !crewList.length) {
+      if (!castList.length || !crewList.length || !summary) {
         const wiki = await fetchWikipediaCastCrew(clean);
         if (wiki) {
           if (!castList.length && wiki.castList.length) castList = wiki.castList;
           if (!crewList.length && wiki.crewList.length) crewList = wiki.crewList;
+          if (!summary && wiki.summary) summary = wiki.summary;
         }
       }
 
@@ -2044,6 +2052,7 @@ const ONAIR_LIVE = (() => {
         score10,
         image,
         rating,
+        summary: summary || "",
         castList: castList || [],
         crewList: crewList || [],
         wikiChecked: true,

@@ -2017,6 +2017,14 @@
           score10: resolved.score10
         });
       }
+      const modalTitleEl = document.getElementById("modalTitle");
+      if (!modalTitleEl || modalTitleEl.textContent !== rawTitle) return;
+      if (resolved.summary) {
+        const synEl = el.modalBody && el.modalBody.querySelector(".modal-synopsis");
+        if (synEl && (/^Historical broadcast on/i.test(synEl.textContent) || /^Live UK television broadcast/i.test(synEl.textContent))) {
+          synEl.textContent = resolved.summary;
+        }
+      }
       if (resolved.image) {
         const headerWrap = document.getElementById("modalHeaderWrap");
         if (headerWrap && !headerWrap.querySelector("img.modal-poster")) {
