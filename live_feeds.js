@@ -1832,9 +1832,68 @@ const ONAIR_LIVE = (() => {
     }
   }
 
+  async function fetchWikipediaCastCrew(cleanTitle) {
+    try {
+      const sUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanTitle)}&srlimit=1&format=json&origin=*`;
+      const sRes = await fetchJson(sUrl, 5000);
+      const hits = sRes && sRes.query && sRes.query.search;
+      if (!Array.isArray(hits) || !hits.length) return null;
+      const pageTitle = hits[0].title;
+      const pUrl = `https://en.wikipedia.org/w/api.php?action=parse&page=${encodeURIComponent(pageTitle)}&prop=text&section=0&format=json&origin=*`;
+      const pRes = await fetchJson(pUrl, 5000);
+      const html = (pRes && pRes.parse && pRes.parse.text && pRes.parse.text["*"]) || "";
+      if (!html) return null;
+
+      const extractRow = (labelRegex) => {
+        const re = new RegExp(`<th[^>]*>[\\s\\S]*?${labelRegex}[\\s\\S]*?<\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, "i");
+        const m = html.match(re);
+        if (!m) return [];
+        const cleaned = m[1]
+          .replace(/<style[\s\S]*?<\/style>/gi, "")
+          .replace(/<sup[\s\S]*?<\/sup>/gi, "")
+          .replace(/<li[^>]*>/gi, "\n")
+          .replace(/<br\s*\/?>/gi, "\n")
+          .replace(/<[^>]+>/g, "")
+          .replace(/&#91;[^&#]*&#93;/g, "")
+          .replace(/\[\d+\]|\[[a-z]\]/gi, "")
+          .replace(/&amp;/g, "&")
+          .replace(/&#039;|&apos;/g, "'")
+          .replace(/&quot;/g, '"');
+        return cleaned
+          .split(/[\n,]/)
+          .map((x) => x.trim())
+          .filter((x) => x && x.length > 1 && x.length < 50 && !/^\.mw-/.test(x))
+          .slice(0, 6);
+      };
+
+      const cast = [];
+      const starring = extractRow("Starring");
+      const presented = extractRow("Presented\\s+by");
+      starring.forEach((n) => cast.push(n));
+      presented.forEach((n) => {
+        if (!cast.includes(n)) cast.push(`${n} (Presenter)`);
+      });
+
+      const crew = [];
+      [
+        { re: "Directed\\s+by", role: "Director" },
+        { re: "Created\\s+by", role: "Creator" },
+        { re: "Written\\s+by", role: "Writer" },
+        { re: "Narrated\\s+by", role: "Narrator" }
+      ].forEach(({ re, role }) => {
+        extractRow(re).slice(0, 2).forEach((n) => crew.push(`${n} (${role})`));
+      });
+
+      if (!cast.length && !crew.length) return null;
+      return { castList: cast.slice(0, 6), crewList: crew.slice(0, 5) };
+    } catch {
+      return null;
+    }
+  }
+
   async function resolveDirectShowLink(rawTitle) {
     const clean = String(rawTitle || "")
-      .replace(/^Film:\s*/i, "")
+      .replace(/^(?:New|Live|Film):\s*/i, "")
       .replace(/\s*\(.*?\)\s*/g, " ")
       .replace(/\s*:\s*Series\s*\d+.*$/i, "")
       .trim();
@@ -1849,11 +1908,15 @@ const ONAIR_LIVE = (() => {
     const vault = loadVault();
     const stored = vault[key];
     if (stored && stored.savedAt && Date.now() - stored.savedAt < VAULT_TTL_MS) {
-      if (stored.notFound) {
+      if (stored.notFound && stored.wikiChecked) {
         showLinkCache.set(key, null);
         return null;
       }
-      if ((!stored.imdbId || stored.rtSlug !== undefined) && stored.castList !== undefined) {
+      if (
+        (!stored.imdbId || stored.rtSlug !== undefined) &&
+        Array.isArray(stored.crewList) &&
+        ((stored.castList && stored.castList.length) || (stored.crewList && stored.crewList.length) || stored.wikiChecked)
+      ) {
         showLinkCache.set(key, stored);
         return stored;
       }
@@ -1866,19 +1929,19 @@ const ONAIR_LIVE = (() => {
       let score10 = stored ? stored.score10 : null;
       let image = stored ? stored.image : null;
       let rating = stored ? stored.rating : null;
-      let castList = stored && Array.isArray(stored.castList) ? stored.castList : null;
-      let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : null;
+      let rtSlug = stored && stored.rtSlug ? stored.rtSlug : null;
+      let castList = stored && Array.isArray(stored.castList) ? stored.castList : [];
+      let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : [];
 
-      if (!stored || (!imdbId && !tvmazeUrl) || castList === null) {
-        try {
-          const data = await fetchJson(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(clean)}&embed%5B%5D=cast&embed%5B%5D=crew`);
-          directUrl = directUrl || normalizeDirectUrl(data.officialSite || data.url || null);
-          tvmazeUrl = tvmazeUrl || data.url || null;
-          imdbId = imdbId || (data.externals && data.externals.imdb ? data.externals.imdb : null);
-          score10 = score10 || (data.rating && data.rating.average ? data.rating.average : null);
-          image = image || (data.image ? data.image.medium : null);
-          rating = rating || (score10 ? Math.min(5, Math.max(3, Math.round(score10 / 2))) : null);
-          const emb = data._embedded || {};
+      const mapTvmazeEmbeds = (data) => {
+        directUrl = directUrl || normalizeDirectUrl(data.officialSite || data.url || null);
+        tvmazeUrl = tvmazeUrl || data.url || null;
+        imdbId = imdbId || (data.externals && data.externals.imdb ? data.externals.imdb : null);
+        score10 = score10 || (data.rating && data.rating.average ? data.rating.average : null);
+        image = image || (data.image ? data.image.medium : null);
+        rating = rating || (score10 ? Math.min(5, Math.max(3, Math.round(score10 / 2))) : null);
+        const emb = data._embedded || {};
+        if (!castList.length) {
           castList = (Array.isArray(emb.cast) ? emb.cast : [])
             .slice(0, 6)
             .map((c) => {
@@ -1888,6 +1951,8 @@ const ONAIR_LIVE = (() => {
               return role ? `${actor} (${role})` : actor;
             })
             .filter(Boolean);
+        }
+        if (!crewList.length) {
           const crewPriority = { Creator: 1, Showrunner: 2, Director: 3, Writer: 4, "Executive Producer": 5 };
           const rawCrew = (Array.isArray(emb.crew) ? emb.crew : [])
             .map((c) => ({
@@ -1905,25 +1970,59 @@ const ONAIR_LIVE = (() => {
             crewList.push(c.type ? `${c.name} (${c.type})` : c.name);
             if (crewList.length >= 4) break;
           }
+        }
+      };
+
+      // Tier 1: TVMaze singlesearch (shows + cast + crew)
+      if (!tvmazeUrl || (!castList.length && !crewList.length)) {
+        try {
+          const data = await fetchJson(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(clean)}&embed%5B%5D=cast&embed%5B%5D=crew`);
+          mapTvmazeEmbeds(data);
         } catch {
-          // Movie/film fallback via Wikidata SPARQL (director, cast, IMDb, Rotten Tomatoes)
-          const safeTitle = clean.replace(/["\\]/g, "").trim();
-          const filmQuery = `SELECT ?directorLabel ?imdb ?rt (GROUP_CONCAT(DISTINCT ?castLabel; separator="|") AS ?cast) WHERE { ?item wdt:P31/wdt:P279* wd:Q11424; rdfs:label "${safeTitle}"@en. OPTIONAL { ?item wdt:P57 ?director. } OPTIONAL { ?item wdt:P161 ?cast. } OPTIONAL { ?item wdt:P345 ?imdb. } OPTIONAL { ?item wdt:P1258 ?rt. } SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } GROUP BY ?directorLabel ?imdb ?rt LIMIT 1`;
-          const wdFilm = await fetchJson(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(filmQuery)}`, 7000);
-          const row = wdFilm && wdFilm.results && wdFilm.results.bindings && wdFilm.results.bindings[0];
-          if (!row) throw new Error("Not found on TVMaze or Wikidata");
-          if (row.imdb && row.imdb.value) imdbId = imdbId || row.imdb.value;
-          if (row.rt && row.rt.value) rtSlug = row.rt.value;
-          if (row.cast && row.cast.value) {
-            castList = row.cast.value.split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6);
-          }
-          if (row.directorLabel && row.directorLabel.value) {
-            crewList = [`${row.directorLabel.value.trim()} (Director)`];
+          // Tier 2: TVMaze fuzzy /search/shows fallback
+          try {
+            const hits = await fetchJson(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(clean)}`);
+            if (Array.isArray(hits) && hits[0] && hits[0].show && hits[0].show.id) {
+              const full = await fetchJson(`https://api.tvmaze.com/shows/${hits[0].show.id}?embed%5B%5D=cast&embed%5B%5D=crew`);
+              mapTvmazeEmbeds(full);
+            }
+          } catch {
+            // Continue to Tier 3
           }
         }
       }
 
-      let rtSlug = stored && stored.rtSlug ? stored.rtSlug : null;
+      // Tier 3: Wikipedia Infobox failover (works for movies, documentaries, panel shows & TV)
+      if (!castList.length || !crewList.length) {
+        const wiki = await fetchWikipediaCastCrew(clean);
+        if (wiki) {
+          if (!castList.length && wiki.castList.length) castList = wiki.castList;
+          if (!crewList.length && wiki.crewList.length) crewList = wiki.crewList;
+        }
+      }
+
+      // Tier 4: Wikidata Film fallback (director, cast, IMDb, RT) if still missing
+      if (!castList.length && !crewList.length) {
+        try {
+          const safeTitle = clean.replace(/["\\]/g, "").trim();
+          const filmQuery = `SELECT ?directorLabel ?imdb ?rt (GROUP_CONCAT(DISTINCT ?castLabel; separator="|") AS ?cast) WHERE { ?item wdt:P31/wdt:P279* wd:Q11424; rdfs:label "${safeTitle}"@en. OPTIONAL { ?item wdt:P57 ?director. } OPTIONAL { ?item wdt:P161 ?cast. } OPTIONAL { ?item wdt:P345 ?imdb. } OPTIONAL { ?item wdt:P1258 ?rt. } SERVICE wikibase:label { bd:serviceParam wikibase:language "en". } } GROUP BY ?directorLabel ?imdb ?rt LIMIT 1`;
+          const wdFilm = await fetchJson(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(filmQuery)}`, 7000);
+          const row = wdFilm && wdFilm.results && wdFilm.results.bindings && wdFilm.results.bindings[0];
+          if (row) {
+            if (row.imdb && row.imdb.value) imdbId = imdbId || row.imdb.value;
+            if (row.rt && row.rt.value) rtSlug = rtSlug || row.rt.value;
+            if (row.cast && row.cast.value) {
+              castList = row.cast.value.split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+            }
+            if (row.directorLabel && row.directorLabel.value) {
+              crewList = [`${row.directorLabel.value.trim()} (Director)`];
+            }
+          }
+        } catch {
+          // Ignore Wikidata errors
+        }
+      }
+
       if (imdbId && !rtSlug) {
         try {
           const sparql = `SELECT ?rtId WHERE { ?item wdt:P345 "${imdbId}". OPTIONAL { ?item wdt:P1258 ?rtId. } } LIMIT 1`;
@@ -1947,6 +2046,7 @@ const ONAIR_LIVE = (() => {
         rating,
         castList: castList || [],
         crewList: crewList || [],
+        wikiChecked: true,
         savedAt: Date.now()
       };
       showLinkCache.set(key, resolved);
@@ -1954,7 +2054,7 @@ const ONAIR_LIVE = (() => {
       saveVault(vault);
       return resolved;
     } catch {
-      const miss = { notFound: true, savedAt: Date.now() };
+      const miss = { notFound: true, wikiChecked: true, savedAt: Date.now() };
       showLinkCache.set(key, null);
       vault[key] = miss;
       saveVault(vault);
