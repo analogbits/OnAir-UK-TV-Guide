@@ -752,16 +752,17 @@ const ONAIR_LIVE = (() => {
   async function fetchTimeMachineDay(isoDate, channelsList = []) {
     const region = getRegion();
     const bbcChs = (channelsList || []).filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && getBbcGenomeServiceSlug(c.name, region.id)).slice(0, 4);
-    const [tv24Map, tvmGbList, tvmIeList, ...bbcResults] = await Promise.all([
+    const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
       fetchTv24DayMap(isoDate).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
-      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
-      ...bbcChs.map((c) => fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null))
+      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
     ]);
     const bbcBySid = {};
-    bbcChs.forEach((c, idx) => {
-      if (bbcResults[idx] && bbcResults[idx].length) bbcBySid[c.sid] = bbcResults[idx];
-    });
+    for (const c of bbcChs) {
+      if (tv24Map && tv24Map[normTv24ChName(c.name)]) continue;
+      const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null);
+      if (evs && evs.length) bbcBySid[c.sid] = evs;
+    }
     const tvmList = [
       ...(Array.isArray(tvmGbList) ? tvmGbList : []),
       ...(Array.isArray(tvmIeList) ? tvmIeList : [])
@@ -1714,6 +1715,7 @@ const ONAIR_LIVE = (() => {
     if (isLocalHttp) list.push(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
     else if (isFile) list.push(`http://127.0.0.1:8765/api/proxy?url=${encodeURIComponent(targetUrl)}`);
     if (includeDirect) list.push(targetUrl);
+    list.push(`https://api.cors.lol/?url=${encodeURIComponent(targetUrl)}`);
     list.push(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
     list.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
     return list;
