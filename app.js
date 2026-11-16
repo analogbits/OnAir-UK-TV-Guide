@@ -3665,13 +3665,24 @@
           }
         }
         renderCalendar();
-        const btnRect = el.timeMachineBtn.getBoundingClientRect();
-        if (btnRect.left + 312 > window.innerWidth) {
-          el.tmPopover.style.left = "auto";
-          el.tmPopover.style.right = "0";
+        if (window.innerWidth <= 768) {
+          if (el.tmPopover.parentElement !== document.body) {
+            document.body.appendChild(el.tmPopover);
+          }
+          el.tmPopover.style.left = "";
+          el.tmPopover.style.right = "";
         } else {
-          el.tmPopover.style.left = "0";
-          el.tmPopover.style.right = "auto";
+          if (el.tmPickerWrap && el.tmPopover.parentElement !== el.tmPickerWrap) {
+            el.tmPickerWrap.appendChild(el.tmPopover);
+          }
+          const btnRect = el.timeMachineBtn.getBoundingClientRect();
+          if (btnRect.left + 312 > window.innerWidth) {
+            el.tmPopover.style.left = "auto";
+            el.tmPopover.style.right = "0";
+          } else {
+            el.tmPopover.style.left = "0";
+            el.tmPopover.style.right = "auto";
+          }
         }
         el.tmPopover.classList.remove("hidden");
         el.timeMachineBtn.setAttribute("aria-expanded", "true");
@@ -3682,7 +3693,9 @@
     };
 
     document.addEventListener("click", (e) => {
-      if (el.tmPickerWrap && !el.tmPickerWrap.contains(e.target)) {
+      const inWrap = el.tmPickerWrap && el.tmPickerWrap.contains(e.target);
+      const inPop = el.tmPopover && el.tmPopover.contains(e.target);
+      if (!inWrap && !inPop) {
         el.tmPopover.classList.add("hidden");
         el.timeMachineBtn.setAttribute("aria-expanded", "false");
       }

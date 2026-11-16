@@ -3126,3 +3126,80 @@ select {
   color: var(--text-primary);
   font-size: 13px;
 }
+
+/* Mobile Portrait Full Accessibility & Touch Polish */
+@media (max-width: 768px) {
+  .tm-popover {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    top: 50% !important;
+    bottom: auto !important;
+    transform: translateY(-50%);
+    width: auto !important;
+    max-width: 360px;
+    margin: 0 auto;
+    max-height: 82vh;
+    overflow-y: auto;
+    z-index: 9999 !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+
+  .tm-day-btn {
+    height: 36px;
+    font-size: 13px;
+  }
+
+  .tm-pop-nav {
+    width: 32px;
+    height: 32px;
+  }
+
+  .chat-panel,
+  .debug-panel {
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
+    bottom: 68px !important;
+    max-height: 68vh !important;
+  }
+
+  .chat-fab {
+    right: 12px;
+    bottom: 14px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .debug-fab {
+    left: 12px;
+    bottom: 14px;
+    padding: 7px 11px;
+    font-size: 11.5px;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .settings-select {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0 !important;
+  }
+
+  .tm-banner {
+    margin: 8px 12px 0;
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  :root {
+    --epg-channel-col: 148px;
+  }
+}
