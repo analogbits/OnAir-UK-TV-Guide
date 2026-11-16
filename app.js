@@ -3417,10 +3417,20 @@
     showToast(`Region switched to ${reg.name}`);
   }
 
+  let lastTmRefreshTs = 0;
+
   async function loadTimeMachineDate(isoDate, force = false) {
     if (!isoDate) {
       exitTimeMachine();
       return;
+    }
+    if (force) {
+      const waitSec = Math.ceil((lastTmRefreshTs + 15000 - Date.now()) / 1000);
+      if (waitSec > 0) {
+        showToast(`Please wait ${waitSec}s before refreshing Time Machine again (prevents rate-limit blocks)`);
+        return;
+      }
+      lastTmRefreshTs = Date.now();
     }
     state.timeMachineDate = isoDate;
     timeMachineEpg = {};
@@ -3454,6 +3464,9 @@
       const genomeUrl = (dataRes && dataRes.genomeUrl) || `https://genome.ch.bbc.co.uk/schedules/service_bbc_one_northern_ireland/${isoDate}`;
       const count = (dataRes && dataRes.totalEvents) || 0;
       const src = (dataRes && dataRes.sourceLabel) || "Archive";
+      const issueHtml = dataRes && dataRes.issueNote
+        ? `<div style="width:100%; font-size:11.5px; color:#d97706; margin-top:4px;">&#9888;&#65039; ${escapeHtml(dataRes.issueNote)}</div>`
+        : "";
       if (el.timeMachineBanner) {
         el.timeMachineBanner.innerHTML = `
           <div>
@@ -3466,6 +3479,7 @@
             <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">tv24.co.uk ↗</a>
             <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
           </div>
+          ${issueHtml}
         `;
         const refreshBtn = document.getElementById("tmRefreshBtn");
         if (refreshBtn) refreshBtn.onclick = () => loadTimeMachineDate(isoDate, true);

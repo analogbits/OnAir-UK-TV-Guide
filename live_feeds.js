@@ -966,11 +966,16 @@ const ONAIR_LIVE = (() => {
     });
 
     const bbc1Slug = getBbcGenomeServiceSlug("BBC One", region.id) || "service_bbc_one_northern_ireland";
+    const missingArchives = !isLocalProxy && !customProxy && !tv24Map && Object.keys(bbcBySid).length === 0;
+    const issueNote = missingArchives
+      ? "Public CORS proxies (cors.lol / corsproxy / allorigins) blocked BBC Genome & tv24 on GitHub Pages — showing TVMaze UK + IE only. Wait ~60s before refreshing, or set a Custom CORS Relay in Settings."
+      : "";
     const result = {
       isoDate,
       schedulesBySid,
       totalEvents,
       sourceLabel: sources.length ? sources.join(" + ") : "No archive data",
+      issueNote,
       tv24Url: `https://tv24.co.uk/tv/${isoDate}`,
       genomeUrl: `https://genome.ch.bbc.co.uk/schedules/${bbc1Slug}/${isoDate}`
     };
