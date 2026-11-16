@@ -1227,18 +1227,21 @@
         .filter(Boolean)
     );
     const season = typeof getActiveSeason === "function" ? getActiveSeason() : null;
-    const scored = catalogue
+    const highRated = catalogue.filter((item) => (Number(item.rating) || 0) >= 4);
+    const sourceList = highRated.length >= count ? highRated : catalogue;
+    const scored = sourceList
       .map((item) => {
-        let score = (Number(item.rating) || 3.5) * 15;
-        if (item.isLiveData) score += 35;
-        if (item.thisWeek) score += 25;
-        if (tvTitles.has(String(item.title || "").toLowerCase().trim())) score += 20;
+        const rating = Number(item.rating) || 3.5;
+        let score = rating * 30;
+        if (item.isLiveData) score += 18;
+        if (item.thisWeek) score += 15;
+        if (tvTitles.has(String(item.title || "").toLowerCase().trim())) score += 12;
         if (season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`)) {
-          score += 12;
+          score += 8;
         }
         return { item, score };
       })
-      .sort((a, b) => b.score - a.score || (Number(b.item.year) || 0) - (Number(a.item.year) || 0));
+      .sort((a, b) => b.score - a.score || (Number(b.item.rating) || 0) - (Number(a.item.rating) || 0) || (Number(b.item.year) || 0) - (Number(a.item.year) || 0));
 
     const pool = scored.slice(0, Math.min(20, scored.length)).map((x) => x.item);
     if (!pool.length) return [];
