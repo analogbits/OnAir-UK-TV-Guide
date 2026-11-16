@@ -2357,7 +2357,17 @@
       .join("");
   }
 
-  async function syncLiveData(force = false) {
+  let lastFullRefreshTs = 0;
+
+  async function syncLiveData(force = false, bypassCooldown = false) {
+    if (force && !bypassCooldown) {
+      const waitSec = Math.ceil((lastFullRefreshTs + 15000 - Date.now()) / 1000);
+      if (waitSec > 0) {
+        showToast(`Please wait ${waitSec}s before refreshing the TV Guide again (prevents rate-limit blocks)`);
+        return;
+      }
+      lastFullRefreshTs = Date.now();
+    }
     el.liveRefreshBtn.classList.add("is-syncing");
     el.liveStatusText.textContent = "Syncing Live EPG...";
 
@@ -2399,9 +2409,23 @@
       else if (state.view === "streaming") renderStreaming();
       else if (state.view === "live-feeds") renderLiveFeeds();
 
-      if (force) showToast("Live UK TV EPG & streaming feeds refreshed");
+      if (force) {
+        const health = ONAIR_LIVE.getFeedHealth ? ONAIR_LIVE.getFeedHealth() : {};
+        if (health.backoffHosts && health.backoffHosts.length) {
+          showToast(`Rate-limited by ${health.backoffHosts.join(", ")} — paused 5m. Wait ~5 mins before refreshing again.`);
+        } else if (
+          (health.sky && health.sky.status === "error") ||
+          (health.pluto && health.pluto.status === "error") ||
+          (health.tubi && health.tubi.status === "error")
+        ) {
+          showToast("Some feeds had errors — using cached/snapshot fallback. Wait ~60s before retrying.");
+        } else {
+          showToast("Live UK TV EPG & streaming feeds refreshed");
+        }
+      }
     } catch {
       el.liveStatusText.textContent = "Offline Mode";
+      if (force) showToast("Live EPG sync hit an error — using cached guide. Wait ~60s before retrying.");
     } finally {
       el.liveRefreshBtn.classList.remove("is-syncing");
     }
@@ -3413,7 +3437,7 @@
     const reg = ONAIR_LIVE.setRegion(regionId);
     renderRegionSelect();
     liveEpgByDay.clear();
-    await syncLiveData(true);
+    await syncLiveData(true, true);
     showToast(`Region switched to ${reg.name}`);
   }
 
