@@ -688,12 +688,80 @@ const ONAIR_LIVE = (() => {
     return false;
   }
 
+  function getBbcGenomeServiceSlug(chName, regionId = "ni") {
+    const n = String(chName || "").toLowerCase();
+    if (/^bbc one/i.test(n)) {
+      if (n.includes("ni") || regionId === "ni") return "service_bbc_one_northern_ireland";
+      if (n.includes("scot") || regionId === "scotland") return "service_bbc_one_scotland";
+      if (n.includes("wal") || regionId === "wales") return "service_bbc_one_wales";
+      return "service_bbc_one_london";
+    }
+    if (/^bbc two/i.test(n)) {
+      if (n.includes("ni") || regionId === "ni") return "service_bbc_two_northern_ireland";
+      if (n.includes("wal") || regionId === "wales") return "service_bbc_two_wales";
+      return "service_bbc_two_england";
+    }
+    if (/^bbc three/i.test(n)) return "service_bbc_three";
+    if (/^bbc four/i.test(n)) return "service_bbc_four";
+    if (/^bbc scotland/i.test(n)) return "service_bbc_scotland";
+    if (/^bbc alba/i.test(n)) return "service_bbc_alba";
+    if (/^bbc news/i.test(n)) return "service_bbc_news";
+    if (/^cbbc/i.test(n)) return "service_cbbc";
+    if (/^cbeebies/i.test(n)) return "service_cbeebies";
+    return null;
+  }
+
+  async function fetchBbcGenomeService(serviceSlug, isoDate) {
+    const buildId = "CJZAoJ_Mrgpy51nbuC1ZK";
+    const targetUrl = `https://genome.ch.bbc.co.uk/_next/data/${buildId}/schedules/${serviceSlug}/${isoDate}.json`;
+    for (const url of buildProxyUrls(targetUrl, false)) {
+      try {
+        const res = await fetchJson(url, 8000);
+        const items = res && res.pageProps && res.pageProps.result && res.pageProps.result.schedule && res.pageProps.result.schedule.items;
+        if (Array.isArray(items) && items.length > 0) {
+          const dayStartMs = Date.parse(`${isoDate}T00:00:00Z`);
+          const events = [];
+          items.forEach((group, idx) => {
+            const it = Array.isArray(group) ? group[0] : group;
+            if (!it || !it.title || !it.start) return;
+            const stMs = Date.parse(it.start);
+            if (Number.isNaN(stMs)) return;
+            const startMin = Math.floor((stMs - dayStartMs) / 60000);
+            const durMin = typeof it.duration === "number" ? Math.round(it.duration / 60) : 30;
+            const endMin = startMin + Math.max(5, durMin);
+            if (endMin <= 360 || startMin >= 24 * 60) return;
+            const syn = (it.synopses && (it.synopses.short || it.synopses.medium || it.synopses.long)) || "";
+            events.push({
+              id: `bbc-${it._id || `${isoDate}-${idx}`}`,
+              title: it.title,
+              desc: syn || `${it.title} (${isoDate})`,
+              isRepeat: Boolean(it.isRepeat),
+              startMin: Math.max(360, startMin),
+              endMin: Math.min(24 * 60, endMin)
+            });
+          });
+          if (events.length) return events;
+        }
+      } catch {
+        // Try next proxy
+      }
+    }
+    return null;
+  }
+
   async function fetchTimeMachineDay(isoDate, channelsList = []) {
-    const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
+    const region = getRegion();
+    const bbcChs = (channelsList || []).filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && getBbcGenomeServiceSlug(c.name, region.id)).slice(0, 4);
+    const [tv24Map, tvmGbList, tvmIeList, ...bbcResults] = await Promise.all([
       fetchTv24DayMap(isoDate).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
-      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
+      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
+      ...bbcChs.map((c) => fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null))
     ]);
+    const bbcBySid = {};
+    bbcChs.forEach((c, idx) => {
+      if (bbcResults[idx] && bbcResults[idx].length) bbcBySid[c.sid] = bbcResults[idx];
+    });
     const tvmList = [
       ...(Array.isArray(tvmGbList) ? tvmGbList : []),
       ...(Array.isArray(tvmIeList) ? tvmIeList : [])
@@ -703,11 +771,36 @@ const ONAIR_LIVE = (() => {
     let totalEvents = 0;
     const sources = [];
     if (tv24Map) sources.push("tv24.co.uk");
+    if (Object.keys(bbcBySid).length) sources.push("BBC Genome");
     if (Array.isArray(tvmGbList) && tvmGbList.length) sources.push("TVMaze UK");
     if (Array.isArray(tvmIeList) && tvmIeList.length) sources.push("TVMaze IE");
 
     (channelsList || []).forEach((ch) => {
       if (!ch || !ch.sid || ch.plutoSlug || ch.tubiId) return;
+      if (bbcBySid[ch.sid] && bbcBySid[ch.sid].length) {
+        schedulesBySid[ch.sid] = bbcBySid[ch.sid].map((ev) => ({
+          id: ev.id,
+          channelId: ch.id,
+          sid: ch.sid,
+          dayOffset: 0,
+          title: ev.title,
+          genre: ch.category || "Entertainment",
+          rating: "PG",
+          ep: isoDate,
+          desc: ev.desc,
+          cast: ch.category || "TV",
+          stars: null,
+          isNew: false,
+          isRepeat: ev.isRepeat,
+          isLiveData: true,
+          thisWeek: false,
+          interests: inferInterestsFromEvent(ev.title, ev.desc, ch.category || "Entertainment"),
+          startMin: ev.startMin,
+          endMin: ev.endMin
+        }));
+        totalEvents += schedulesBySid[ch.sid].length;
+        return;
+      }
       const nk = normTv24ChName(ch.name);
       const tv24Events = tv24Map && (tv24Map[nk] || tv24Map[nk.replace(/1$/, "")]);
       if (tv24Events && tv24Events.length) {
@@ -777,12 +870,14 @@ const ONAIR_LIVE = (() => {
       }
     });
 
+    const bbc1Slug = getBbcGenomeServiceSlug("BBC One", region.id) || "service_bbc_one_northern_ireland";
     return {
       isoDate,
       schedulesBySid,
       totalEvents,
       sourceLabel: sources.length ? sources.join(" + ") : "No archive data",
-      tv24Url: `https://tv24.co.uk/tv/${isoDate}`
+      tv24Url: `https://tv24.co.uk/tv/${isoDate}`,
+      genomeUrl: `https://genome.ch.bbc.co.uk/schedules/${bbc1Slug}/${isoDate}`
     };
   }
 
