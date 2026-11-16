@@ -855,6 +855,7 @@
 
     const filterOptions = [
       { id: "All", label: "All Picks" },
+      { id: "OnDemand", label: "📱 On Demand" },
       { id: "New", label: "✨ New & Premieres" },
       { id: "Film", label: "🎬 Films" },
       { id: "Drama", label: "🎭 Drama" },
@@ -900,10 +901,51 @@
     });
 
     candidates.sort((a, b) => b.score - a.score || a.prog.startMin - b.prog.startMin);
-    const topPicks = candidates.slice(0, 12);
 
     const pickedDate = new Date();
     pickedDate.setDate(pickedDate.getDate() + dayOffset);
+    const pickedIso = `${pickedDate.getFullYear()}-${String(pickedDate.getMonth() + 1).padStart(2, "0")}-${String(pickedDate.getDate()).padStart(2, "0")}`;
+
+    // On-Demand & Streaming picks for this day (exact-date drops + rotating UK streaming/catch-up picks)
+    const catalogue = getMergedCatalogue();
+    const odCandidates = [];
+    catalogue.forEach((item, idx) => {
+      if (!item || !item.title) return;
+      const g = `${item.genre || ""} ${item.type || ""}`;
+      if (filter === "New" && !item.thisWeek && !item.isNew && !(item.ep || "").includes(pickedIso)) return;
+      else if (filter === "Film" && !/film|movie/i.test(g)) return;
+      else if (filter !== "All" && filter !== "OnDemand" && filter !== "New" && filter !== "Film" && !new RegExp(filter, "i").test(g)) return;
+
+      const tKey = item.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (seenTitles.has(tKey)) return;
+
+      const isExactDate = (item.releaseDate === pickedIso) || (item.airdate === pickedIso) || String(item.ep || "").includes(pickedIso) || String(item.desc || "").includes(pickedIso);
+      let odScore = (item.stars || 3.5) * 10;
+      if (isExactDate) odScore += 65;
+      if (item.thisWeek) odScore += 20;
+      // Rotate non-exact-date catalogue across upcoming days so each day ahead feels fresh
+      if (!isExactDate) odScore += ((idx + dayOffset * 7) % 13);
+      odCandidates.push({ kind: "stream", item, score: odScore });
+    });
+    odCandidates.sort((a, b) => b.score - a.score);
+
+    let combinedPicks = [];
+    if (filter === "OnDemand") {
+      combinedPicks = odCandidates.slice(0, 12);
+    } else if (filter === "All") {
+      const tvTop = candidates.slice(0, 8).map((c) => ({ kind: "tv", ...c }));
+      const odTop = odCandidates.slice(0, 4);
+      const maxLen = Math.max(tvTop.length, odTop.length);
+      for (let i = 0; i < maxLen && combinedPicks.length < 12; i++) {
+        if (tvTop[i]) combinedPicks.push(tvTop[i]);
+        if (odTop[i] && combinedPicks.length < 12) combinedPicks.push(odTop[i]);
+      }
+    } else {
+      const tvTop = candidates.slice(0, 9).map((c) => ({ kind: "tv", ...c }));
+      const odTop = odCandidates.slice(0, 3);
+      combinedPicks = [...tvTop, ...odTop].slice(0, 12);
+    }
+
     const dayHeading =
       dayOffset === 0
         ? "Today's Pick of the Day"
@@ -912,10 +954,12 @@
         : `Watch Ahead — ${pickedDate.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}`;
 
     const cardsHtml =
-      topPicks.length > 0
-        ? topPicks.map(({ prog, channel }) => renderTvPickCard({ kind: "tv", prog, channel })).join("")
+      combinedPicks.length > 0
+        ? combinedPicks
+            .map((entry) => (entry.kind === "stream" ? renderStreamCard(entry.item) : renderTvPickCard({ kind: "tv", prog: entry.prog, channel: entry.channel })))
+            .join("")
         : `<div class="empty-state" style="grid-column:1/-1; padding:26px;">${
-            missingCount > 0
+            missingCount > 0 && filter !== "OnDemand"
               ? `Loading ${escapeHtml(dayHeading)} schedules...`
               : `No matching picks found for this filter on ${escapeHtml(dayHeading)}. Try "All Picks".`
           }</div>`;
@@ -924,7 +968,7 @@
       <div class="section-header-row" style="margin-bottom:10px;">
         <div>
           <h2 class="editorial-heading" style="font-size:24px;">📅 ${escapeHtml(dayHeading)}</h2>
-          <p class="section-subtitle">Radio Times &amp; TV Times style daily picks across your ${escapeHtml((ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().short) || "UK")} channels</p>
+          <p class="section-subtitle">Radio Times &amp; TV Times style daily picks across ${escapeHtml((ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().short) || "UK")} TV &amp; On Demand</p>
         </div>
         <div class="filter-pills" style="flex-wrap:wrap;">${dayPills}</div>
       </div>
