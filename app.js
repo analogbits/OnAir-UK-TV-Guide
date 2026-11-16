@@ -3400,7 +3400,11 @@
     renderEPG(false);
 
     const res = ONAIR_LIVE.fetchTimeMachineDay
-      ? await ONAIR_LIVE.fetchTimeMachineDay(isoDate, liveChannels).catch(() => null)
+      ? await ONAIR_LIVE.fetchTimeMachineDay(isoDate, liveChannels, (updatedRes) => {
+          if (state.timeMachineDate !== isoDate) return;
+          timeMachineEpg = updatedRes.schedulesBySid || {};
+          renderEPG(false);
+        }).catch(() => null)
       : null;
 
     if (state.timeMachineDate !== isoDate) return;

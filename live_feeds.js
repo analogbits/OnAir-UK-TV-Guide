@@ -714,7 +714,14 @@ const ONAIR_LIVE = (() => {
   async function fetchBbcGenomeService(serviceSlug, isoDate) {
     const buildId = "CJZAoJ_Mrgpy51nbuC1ZK";
     const targetUrl = `https://genome.ch.bbc.co.uk/_next/data/${buildId}/schedules/${serviceSlug}/${isoDate}.json`;
-    for (const url of buildProxyUrls(targetUrl, false)) {
+    const isLocalHttp = typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.protocol.startsWith("http");
+    const isFile = typeof location !== "undefined" && location.protocol === "file:";
+    const urls = isLocalHttp
+      ? [`/api/proxy?url=${encodeURIComponent(targetUrl)}`]
+      : isFile
+      ? [`http://127.0.0.1:8765/api/proxy?url=${encodeURIComponent(targetUrl)}`]
+      : [`https://api.cors.lol/?url=${encodeURIComponent(targetUrl)}`];
+    for (const url of urls) {
       try {
         const res = await fetchJson(url, 8000);
         const items = res && res.pageProps && res.pageProps.result && res.pageProps.result.schedule && res.pageProps.result.schedule.items;
@@ -751,34 +758,33 @@ const ONAIR_LIVE = (() => {
 
   const timeMachineMemCache = new Map();
 
-  async function fetchTimeMachineDay(isoDate, channelsList = []) {
+  async function fetchTimeMachineDay(isoDate, channelsList = [], onBackgroundUpdate = null) {
     const region = getRegion();
     const memKey = `${isoDate}_${region.id}`;
     if (timeMachineMemCache.has(memKey)) {
       return timeMachineMemCache.get(memKey);
     }
 
-    // Polite cap: only BBC One & BBC Two from BBC Genome (max 2 requests, spaced 350ms, skipped if tv24 already has them)
+    // Polite cap: BBC One immediately, BBC Two staggered 3s later in background (zero 429 on api.cors.lol)
     const bbcChs = (channelsList || [])
       .filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && /^bbc (one|two)\b/i.test(c.name || "") && getBbcGenomeServiceSlug(c.name, region.id))
       .slice(0, 2);
+    const bbc1 = bbcChs[0] || null;
+    const bbc2 = bbcChs[1] || null;
 
     const isLocalProxy =
       typeof location !== "undefined" &&
       (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1");
 
-    const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
+    const [tv24Map, tvmGbList, tvmIeList, bbc1Events] = await Promise.all([
       isLocalProxy ? fetchTv24DayMap(isoDate).catch(() => null) : Promise.resolve(null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
-      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
+      fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
+      bbc1 ? fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc1.name, region.id), isoDate).catch(() => null) : Promise.resolve(null)
     ]);
     const bbcBySid = {};
-    for (let i = 0; i < bbcChs.length; i++) {
-      const c = bbcChs[i];
-      if (tv24Map && tv24Map[normTv24ChName(c.name)]) continue;
-      if (i > 0) await new Promise((r) => setTimeout(r, 1200));
-      const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null);
-      if (evs && evs.length) bbcBySid[c.sid] = evs;
+    if (bbc1 && !(tv24Map && tv24Map[normTv24ChName(bbc1.name)]) && bbc1Events && bbc1Events.length) {
+      bbcBySid[bbc1.sid] = bbc1Events;
     }
     const tvmList = [
       ...(Array.isArray(tvmGbList) ? tvmGbList : []),
@@ -898,6 +904,44 @@ const ONAIR_LIVE = (() => {
       genomeUrl: `https://genome.ch.bbc.co.uk/schedules/${bbc1Slug}/${isoDate}`
     };
     if (totalEvents > 0) timeMachineMemCache.set(memKey, result);
+
+    if (bbc2 && !(tv24Map && tv24Map[normTv24ChName(bbc2.name)])) {
+      setTimeout(async () => {
+        try {
+          const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc2.name, region.id), isoDate).catch(() => null);
+          if (!evs || !evs.length) return;
+          result.schedulesBySid[bbc2.sid] = evs.map((ev) => ({
+            id: ev.id,
+            channelId: bbc2.id,
+            sid: bbc2.sid,
+            dayOffset: 0,
+            title: ev.title,
+            genre: bbc2.category || "Entertainment",
+            rating: "PG",
+            ep: isoDate,
+            desc: ev.desc,
+            cast: bbc2.category || "TV",
+            stars: null,
+            isNew: false,
+            isRepeat: ev.isRepeat,
+            isLiveData: true,
+            thisWeek: false,
+            interests: inferInterestsFromEvent(ev.title, ev.desc, bbc2.category || "Entertainment"),
+            startMin: ev.startMin,
+            endMin: ev.endMin
+          }));
+          result.totalEvents = Object.values(result.schedulesBySid).reduce((sum, arr) => sum + arr.length, 0);
+          if (!result.sourceLabel.includes("BBC Genome")) {
+            result.sourceLabel = `BBC Genome + ${result.sourceLabel}`;
+          }
+          timeMachineMemCache.set(memKey, result);
+          if (typeof onBackgroundUpdate === "function") onBackgroundUpdate(result);
+        } catch {
+          // Ignore background failure
+        }
+      }, 3000);
+    }
+
     return result;
   }
 
