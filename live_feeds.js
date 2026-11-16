@@ -749,17 +749,30 @@ const ONAIR_LIVE = (() => {
     return null;
   }
 
+  const timeMachineMemCache = new Map();
+
   async function fetchTimeMachineDay(isoDate, channelsList = []) {
     const region = getRegion();
-    const bbcChs = (channelsList || []).filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && getBbcGenomeServiceSlug(c.name, region.id)).slice(0, 4);
+    const memKey = `${isoDate}_${region.id}`;
+    if (timeMachineMemCache.has(memKey)) {
+      return timeMachineMemCache.get(memKey);
+    }
+
+    // Polite cap: only BBC One & BBC Two from BBC Genome (max 2 requests, spaced 350ms, skipped if tv24 already has them)
+    const bbcChs = (channelsList || [])
+      .filter((c) => c && c.sid && !c.plutoSlug && !c.tubiId && /^bbc (one|two)\b/i.test(c.name || "") && getBbcGenomeServiceSlug(c.name, region.id))
+      .slice(0, 2);
+
     const [tv24Map, tvmGbList, tvmIeList] = await Promise.all([
       fetchTv24DayMap(isoDate).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => [])
     ]);
     const bbcBySid = {};
-    for (const c of bbcChs) {
+    for (let i = 0; i < bbcChs.length; i++) {
+      const c = bbcChs[i];
       if (tv24Map && tv24Map[normTv24ChName(c.name)]) continue;
+      if (i > 0) await new Promise((r) => setTimeout(r, 350));
       const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(c.name, region.id), isoDate).catch(() => null);
       if (evs && evs.length) bbcBySid[c.sid] = evs;
     }
@@ -872,7 +885,7 @@ const ONAIR_LIVE = (() => {
     });
 
     const bbc1Slug = getBbcGenomeServiceSlug("BBC One", region.id) || "service_bbc_one_northern_ireland";
-    return {
+    const result = {
       isoDate,
       schedulesBySid,
       totalEvents,
@@ -880,6 +893,8 @@ const ONAIR_LIVE = (() => {
       tv24Url: `https://tv24.co.uk/tv/${isoDate}`,
       genomeUrl: `https://genome.ch.bbc.co.uk/schedules/${bbc1Slug}/${isoDate}`
     };
+    if (totalEvents > 0) timeMachineMemCache.set(memKey, result);
+    return result;
   }
 
   async function fetchSkySchedulesForSids(sids, dayOffset = 0, force = false) {
