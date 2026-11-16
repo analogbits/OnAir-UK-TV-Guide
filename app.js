@@ -541,7 +541,7 @@
       const label = i === -1 ? "Yesterday" : i === 0 ? "Today" : i === 1 ? "Tomorrow" : formatter.format(d);
       const pastClass = i < 0 ? "is-past-day" : "";
       days.push(
-        `<button class="date-btn ${pastClass} ${state.dayOffset === i ? "is-active" : ""}" data-day="${i}" type="button" role="tab">${label}</button>`
+        `<button class="date-btn ${pastClass} ${!state.timeMachineDate && state.dayOffset === i ? "is-active" : ""}" data-day="${i}" type="button" role="tab">${label}</button>`
       );
     }
     el.dateStrip.innerHTML = days.join("");
@@ -2102,6 +2102,7 @@
       const dateBtn = e.target.closest("[data-day]");
       if (dateBtn) {
         state.dayOffset = Number(dateBtn.dataset.day);
+        if (state.timeMachineDate) exitTimeMachine();
         renderDateStrip();
         renderEPG(true);
         return;
@@ -3395,6 +3396,7 @@
       el.timeMachineBanner.classList.remove("hidden");
       el.timeMachineBanner.innerHTML = `<span>🕰️ Loading Time Machine TV Guide for <strong>${escapeHtml(shortPretty)}</strong>...</span>`;
     }
+    renderDateStrip();
     renderEPG(false);
 
     const res = ONAIR_LIVE.fetchTimeMachineDay
@@ -3444,6 +3446,7 @@
       el.timeMachineBanner.classList.add("hidden");
       el.timeMachineBanner.innerHTML = "";
     }
+    renderDateStrip();
     renderEPG(false);
     ensureSchedulesForChannels(getFilteredChannels(state.epgCategory), state.dayOffset, false);
   }
