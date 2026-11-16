@@ -744,26 +744,89 @@ const ONAIR_LIVE = (() => {
     return false;
   }
 
-  function getBbcGenomeServiceSlug(chName, regionId = "ni") {
+  function getBbcGenomeServiceSlugs(chName, regionId = "ni") {
     const n = String(chName || "").toLowerCase();
     if (/^bbc one/i.test(n)) {
-      if (n.includes("ni") || regionId === "ni") return "service_bbc_one_northern_ireland";
-      if (n.includes("scot") || regionId === "scotland") return "service_bbc_one_scotland";
-      if (n.includes("wal") || regionId === "wales") return "service_bbc_one_wales";
-      return "service_bbc_one_london";
+      const primary =
+        n.includes("ni") || regionId === "ni"
+          ? "service_bbc_one_northern_ireland"
+          : n.includes("scot") || regionId === "scotland"
+          ? "service_bbc_one_scotland"
+          : n.includes("wal") || regionId === "wales"
+          ? "service_bbc_one_wales"
+          : "service_bbc_one_london";
+      const all = [
+        primary,
+        "service_bbc_one_london",
+        "service_bbc_one_northern_ireland",
+        "service_bbc_one_scotland",
+        "service_bbc_one_wales"
+      ];
+      return [...new Set(all)];
     }
     if (/^bbc two/i.test(n)) {
-      if (n.includes("ni") || regionId === "ni") return "service_bbc_two_northern_ireland";
-      if (n.includes("wal") || regionId === "wales") return "service_bbc_two_wales";
-      return "service_bbc_two_england";
+      const primary =
+        n.includes("ni") || regionId === "ni"
+          ? "service_bbc_two_northern_ireland"
+          : n.includes("wal") || regionId === "wales"
+          ? "service_bbc_two_wales"
+          : n.includes("scot") || regionId === "scotland"
+          ? "service_bbc_two_scotland"
+          : "service_bbc_two_england";
+      const all = [
+        primary,
+        "service_bbc_two_england",
+        "service_bbc_two_northern_ireland",
+        "service_bbc_two_wales",
+        "service_bbc_two_scotland"
+      ];
+      return [...new Set(all)];
     }
-    if (/^bbc three/i.test(n)) return "service_bbc_three";
-    if (/^bbc four/i.test(n)) return "service_bbc_four";
-    if (/^bbc scotland/i.test(n)) return "service_bbc_scotland";
-    if (/^bbc alba/i.test(n)) return "service_bbc_alba";
-    if (/^bbc news/i.test(n)) return "service_bbc_news";
-    if (/^cbbc/i.test(n)) return "service_cbbc";
-    if (/^cbeebies/i.test(n)) return "service_cbeebies";
+    if (/^bbc three/i.test(n)) return ["service_bbc_three"];
+    if (/^bbc four/i.test(n)) return ["service_bbc_four"];
+    if (/^bbc scotland/i.test(n)) return ["service_bbc_scotland"];
+    if (/^bbc alba/i.test(n)) return ["service_bbc_alba"];
+    if (/^bbc news/i.test(n)) return ["service_bbc_news"];
+    if (/^cbbc/i.test(n)) return ["service_cbbc"];
+    if (/^cbeebies/i.test(n)) return ["service_cbeebies"];
+    return [];
+  }
+
+  function getBbcGenomeServiceSlug(chName, regionId = "ni") {
+    return getBbcGenomeServiceSlugs(chName, regionId)[0] || null;
+  }
+
+  async function fetchBbcGenomeAcrossRegions(chName, regionId, isoDate) {
+    const slugs = getBbcGenomeServiceSlugs(chName, regionId);
+    for (const slug of slugs) {
+      const evs = await fetchBbcGenomeService(slug, isoDate).catch(() => null);
+      if (evs && evs.length) return { events: evs, slug };
+    }
+    return null;
+  }
+
+  function lookupTv24Events(tv24Map, chName) {
+    if (!tv24Map) return null;
+    const nk = normTv24ChName(chName);
+    const candidates = [nk, nk.replace(/1$/, "")];
+    if (/^(utv|stv|itv)/.test(nk)) {
+      candidates.push("itv1", "itv", "utv", "stv");
+    }
+    if (/^bbcone/.test(nk)) {
+      candidates.push("bbcone", "bbconelondon", "bbconeni", "bbconescotland", "bbconewales");
+    }
+    if (/^bbctwo/.test(nk)) {
+      candidates.push("bbctwo", "bbctwoengland", "bbctwoni", "bbctwowales", "bbctwoscotland");
+    }
+    if (/^channel4|^c4/.test(nk)) {
+      candidates.push("channel4", "c4");
+    }
+    if (/^5$|^channel5/.test(nk)) {
+      candidates.push("5", "channel5");
+    }
+    for (const key of candidates) {
+      if (key && tv24Map[key] && tv24Map[key].length) return tv24Map[key];
+    }
     return null;
   }
 
@@ -849,14 +912,15 @@ const ONAIR_LIVE = (() => {
       (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1");
 
     const customProxy = getCustomProxyPrefix();
-    const [tv24Map, tvmGbList, tvmIeList, bbc1Events] = await Promise.all([
+    const [tv24Map, tvmGbList, tvmIeList, bbc1Res] = await Promise.all([
       fetchTv24DayMap(isoDate, !(isLocalProxy || customProxy)).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
-      bbc1 ? fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc1.name, region.id), isoDate).catch(() => null) : Promise.resolve(null)
+      bbc1 ? fetchBbcGenomeAcrossRegions(bbc1.name, region.id, isoDate).catch(() => null) : Promise.resolve(null)
     ]);
+    const bbc1Events = bbc1Res ? bbc1Res.events : null;
     const bbcBySid = {};
-    if (bbc1 && !(tv24Map && tv24Map[normTv24ChName(bbc1.name)]) && bbc1Events && bbc1Events.length) {
+    if (bbc1 && !lookupTv24Events(tv24Map, bbc1.name) && bbc1Events && bbc1Events.length) {
       bbcBySid[bbc1.sid] = bbc1Events;
     }
     const tvmList = [
@@ -898,8 +962,7 @@ const ONAIR_LIVE = (() => {
         totalEvents += schedulesBySid[ch.sid].length;
         return;
       }
-      const nk = normTv24ChName(ch.name);
-      const tv24Events = tv24Map && (tv24Map[nk] || tv24Map[nk.replace(/1$/, "")]);
+      const tv24Events = lookupTv24Events(tv24Map, ch.name);
       if (tv24Events && tv24Events.length) {
         schedulesBySid[ch.sid] = tv24Events.map((ev, idx) => ({
           id: `tm-${isoDate}-${ch.sid}-${idx}`,
@@ -1016,16 +1079,16 @@ const ONAIR_LIVE = (() => {
 
     // Build staggered follow-up queue with large gaps (4.5s, 9.5s, 14.5s) to capture missed terrestrial BBC channels safely
     const followUpQueue = [...bbcRest];
-    if (bbc1 && !bbcBySid[bbc1.sid] && !(tv24Map && tv24Map[normTv24ChName(bbc1.name)])) {
+    if (bbc1 && !bbcBySid[bbc1.sid] && !lookupTv24Events(tv24Map, bbc1.name)) {
       followUpQueue.push(bbc1);
     }
-    const pendingFollowUps = followUpQueue.filter((c) => !(tv24Map && tv24Map[normTv24ChName(c.name)]));
+    const pendingFollowUps = followUpQueue.filter((c) => !lookupTv24Events(tv24Map, c.name));
     pendingFollowUps.forEach((ch, idx) => {
       const delayMs = 4500 + idx * 5000;
       setTimeout(async () => {
         try {
-          const evs = await fetchBbcGenomeService(getBbcGenomeServiceSlug(ch.name, region.id), isoDate).catch(() => null);
-          applyBbcEvents(ch, evs);
+          const bbcRes = await fetchBbcGenomeAcrossRegions(ch.name, region.id, isoDate).catch(() => null);
+          applyBbcEvents(ch, bbcRes ? bbcRes.events : null);
         } catch {
           // Ignore background failure
         }

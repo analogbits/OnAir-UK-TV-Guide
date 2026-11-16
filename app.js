@@ -1214,32 +1214,117 @@
       .join("");
   }
 
-  function renderStreaming() {
-    renderStreamingFilters();
+  let weeklyPickIndex = 0;
+  let weeklyPickTimer = null;
+  let weeklyPickPaused = false;
 
-    const catalogue = getMergedCatalogue();
-    const featured = catalogue.find((item) => item.featured) || catalogue[0];
+  function getWeeklyEditorsPicks(catalogue, count = 10) {
+    if (!Array.isArray(catalogue) || !catalogue.length) return [];
+    const weekIndex = Math.floor(Date.now() / (7 * 24 * 60 * 60 * 1000));
+    const tvTitles = new Set(
+      (collectTvHighlights() || [])
+        .map((h) => String((h.prog && h.prog.title) || "").toLowerCase().trim())
+        .filter(Boolean)
+    );
+    const season = typeof getActiveSeason === "function" ? getActiveSeason() : null;
+    const scored = catalogue
+      .map((item) => {
+        let score = (Number(item.rating) || 3.5) * 15;
+        if (item.isLiveData) score += 35;
+        if (item.thisWeek) score += 25;
+        if (tvTitles.has(String(item.title || "").toLowerCase().trim())) score += 20;
+        if (season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`)) {
+          score += 12;
+        }
+        return { item, score };
+      })
+      .sort((a, b) => b.score - a.score || (Number(b.item.year) || 0) - (Number(a.item.year) || 0));
+
+    const pool = scored.slice(0, Math.min(20, scored.length)).map((x) => x.item);
+    if (!pool.length) return [];
+    const offset = weekIndex % pool.length;
+    const rotated = [...pool.slice(offset), ...pool.slice(0, offset)];
+    return rotated.slice(0, Math.min(count, rotated.length));
+  }
+
+  function renderStreamingHeroSlide(picks) {
+    if (!el.streamingHero || !picks.length) return;
+    const idx = ((weeklyPickIndex % picks.length) + picks.length) % picks.length;
+    weeklyPickIndex = idx;
+    const featured = picks[idx];
+    const dotsHtml = picks
+      .map(
+        (p, i) =>
+          `<button type="button" data-hero-dot="${i}" aria-label="Show ${i + 1}: ${escapeHtml(p.title)}" style="width:${i === idx ? "18px" : "7px"}; height:7px; border-radius:999px; border:0; cursor:pointer; padding:0; background:${i === idx ? "#fff" : "rgba(255,255,255,0.38)"}; transition:all 0.2s;"></button>`
+      )
+      .join("");
+
     el.streamingHero.innerHTML = `
       <div>
-        <span class="hero-kicker">OnAir UK Editor's Pick &bull; ${featured.platform}</span>
-        <h1 class="hero-title">${featured.title}</h1>
-        <p class="hero-desc">${featured.desc}</p>
-        <div class="hero-actions">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+          <span class="hero-kicker" style="margin-bottom:0;">OnAir UK Weekly Pick (${idx + 1}/${picks.length}) &bull; ${escapeHtml(featured.platform)}</span>
+          <div style="display:inline-flex; gap:4px; align-items:center;">
+            <button type="button" data-hero-nav="-1" aria-label="Previous weekly pick" style="background:rgba(255,255,255,0.14); color:#fff; border:1px solid rgba(255,255,255,0.25); border-radius:999px; width:24px; height:24px; cursor:pointer; font-size:14px; line-height:1;">&#8249;</button>
+            <button type="button" data-hero-nav="1" aria-label="Next weekly pick" style="background:rgba(255,255,255,0.14); color:#fff; border:1px solid rgba(255,255,255,0.25); border-radius:999px; width:24px; height:24px; cursor:pointer; font-size:14px; line-height:1;">&#8250;</button>
+          </div>
+        </div>
+        <h1 class="hero-title">${escapeHtml(featured.title)}</h1>
+        <p class="hero-desc">${escapeHtml(featured.desc)}</p>
+        <div class="hero-actions" style="flex-wrap:wrap;">
           <button class="btn-primary" data-stream-id="${featured.id}" type="button">Read Review &amp; Details</button>
           <button class="ghost-btn" data-toggle-wl-stream="${featured.id}" type="button">
             ${isInWatchlist(featured.id) ? "✓ In Watchlist" : "+ Add to Watchlist"}
           </button>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; margin-top:14px;">
+          ${dotsHtml}
         </div>
       </div>
       <div class="hero-meta-box">
         <div class="info-label" style="color:rgba(255,255,255,0.7)">Critic Rating</div>
         <div style="font-size:20px; color:#fbbf24; margin-bottom:8px;">${formatStars(featured.rating)}</div>
         <div style="font-size:13px; color:rgba(255,255,255,0.9);">
-          <strong>${featured.type}</strong> &bull; ${featured.seasons}<br />
-          Genre: ${featured.genre} &bull; Age ${featured.age}
+          <strong>${escapeHtml(featured.type)}</strong> &bull; ${escapeHtml(featured.seasons)}<br />
+          Genre: ${escapeHtml(featured.genre)} &bull; Age ${escapeHtml(String(featured.age || "15"))}
         </div>
       </div>
     `;
+
+    el.streamingHero.querySelectorAll("[data-hero-nav]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        weeklyPickIndex = (weeklyPickIndex + Number(btn.dataset.heroNav) + picks.length) % picks.length;
+        renderStreamingHeroSlide(picks);
+      });
+    });
+    el.streamingHero.querySelectorAll("[data-hero-dot]").forEach((dot) => {
+      dot.addEventListener("click", () => {
+        weeklyPickIndex = Number(dot.dataset.heroDot);
+        renderStreamingHeroSlide(picks);
+      });
+    });
+  }
+
+  function renderStreaming() {
+    renderStreamingFilters();
+
+    const catalogue = getMergedCatalogue();
+    const weeklyPicks = getWeeklyEditorsPicks(catalogue, 10);
+    if (weeklyPicks.length) {
+      renderStreamingHeroSlide(weeklyPicks);
+      if (weeklyPickTimer) clearInterval(weeklyPickTimer);
+      weeklyPickTimer = setInterval(() => {
+        if (weeklyPickPaused) return;
+        const streamingSec = document.getElementById("tab-streaming");
+        if (streamingSec && !streamingSec.classList.contains("is-active")) return;
+        weeklyPickIndex = (weeklyPickIndex + 1) % weeklyPicks.length;
+        renderStreamingHeroSlide(weeklyPicks);
+      }, 8000);
+      if (!el.streamingHero.dataset.hoverBound) {
+        el.streamingHero.dataset.hoverBound = "1";
+        el.streamingHero.addEventListener("mouseenter", () => { weeklyPickPaused = true; });
+        el.streamingHero.addEventListener("mouseleave", () => { weeklyPickPaused = false; });
+      }
+    }
 
     let items = catalogue.filter((item) => {
       if (state.streamPlatform !== "All" && item.platform !== state.streamPlatform) return false;

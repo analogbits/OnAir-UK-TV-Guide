@@ -23,6 +23,8 @@ ALLOWED_HOSTS = {
     "epg-cdn.production-public.tubi.io",
     "awk.epgsky.com",
     "feeds.bbci.co.uk",
+    "genome.ch.bbc.co.uk",
+    "tv24.co.uk",
 }
 
 
