@@ -656,10 +656,11 @@ const ONAIR_LIVE = (() => {
       .trim();
   }
 
-  async function fetchTv24DayMap(isoDate) {
+  async function fetchTv24DayMap(isoDate, skipCorsLol = false) {
     const targetUrl = `https://tv24.co.uk/x/tvguide/freeview/0/${isoDate}/0`;
     let raw = null;
-    for (const url of buildProxyUrls(targetUrl, false)) {
+    const proxyList = buildProxyUrls(targetUrl, false).filter((u) => !skipCorsLol || !u.includes("api.cors.lol"));
+    for (const url of proxyList) {
       try {
         const res = await fetchJson(url, 9000);
         if (Array.isArray(res) && res.length > 0) {
@@ -847,7 +848,7 @@ const ONAIR_LIVE = (() => {
 
     const customProxy = getCustomProxyPrefix();
     const [tv24Map, tvmGbList, tvmIeList, bbc1Events] = await Promise.all([
-      (isLocalProxy || customProxy) ? fetchTv24DayMap(isoDate).catch(() => null) : Promise.resolve(null),
+      fetchTv24DayMap(isoDate, !(isLocalProxy || customProxy)).catch(() => null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
       bbc1 ? fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc1.name, region.id), isoDate).catch(() => null) : Promise.resolve(null)
