@@ -767,12 +767,14 @@ const ONAIR_LIVE = (() => {
     return null;
   }
 
+  const DEFAULT_CUSTOM_PROXY = "https://summer-hill-0053.mickyfitz13.workers.dev/?url=";
+
   function getCustomProxyPrefix() {
     try {
       const v = (localStorage.getItem("onair_custom_proxy") || "").trim();
-      return v && /^https?:\/\//i.test(v) ? v : "";
+      return v && /^https?:\/\//i.test(v) ? v : DEFAULT_CUSTOM_PROXY;
     } catch {
-      return "";
+      return DEFAULT_CUSTOM_PROXY;
     }
   }
 
