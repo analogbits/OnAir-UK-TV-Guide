@@ -766,15 +766,27 @@ const ONAIR_LIVE = (() => {
     return null;
   }
 
+  function getCustomProxyPrefix() {
+    try {
+      const v = (localStorage.getItem("onair_custom_proxy") || "").trim();
+      return v && /^https?:\/\//i.test(v) ? v : "";
+    } catch {
+      return "";
+    }
+  }
+
   async function fetchBbcGenomeService(serviceSlug, isoDate) {
     const buildId = "CJZAoJ_Mrgpy51nbuC1ZK";
     const targetUrl = `https://genome.ch.bbc.co.uk/_next/data/${buildId}/schedules/${serviceSlug}/${isoDate}.json`;
     const isLocalHttp = typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.protocol.startsWith("http");
     const isFile = typeof location !== "undefined" && location.protocol === "file:";
+    const customProxy = getCustomProxyPrefix();
     const urls = isLocalHttp
       ? [`/api/proxy?url=${encodeURIComponent(targetUrl)}`]
       : isFile
       ? [`http://127.0.0.1:8765/api/proxy?url=${encodeURIComponent(targetUrl)}`]
+      : customProxy
+      ? [`${customProxy}${encodeURIComponent(targetUrl)}`]
       : [`https://api.cors.lol/?url=${encodeURIComponent(targetUrl)}`];
     for (const url of urls) {
       try {
@@ -813,10 +825,10 @@ const ONAIR_LIVE = (() => {
 
   const timeMachineMemCache = new Map();
 
-  async function fetchTimeMachineDay(isoDate, channelsList = [], onBackgroundUpdate = null) {
+  async function fetchTimeMachineDay(isoDate, channelsList = [], onBackgroundUpdate = null, force = false) {
     const region = getRegion();
     const memKey = `${isoDate}_${region.id}`;
-    if (timeMachineMemCache.has(memKey)) {
+    if (!force && timeMachineMemCache.has(memKey)) {
       logDebug("TimeMachine", `Session cache hit for ${isoDate} (${region.short})`, "info");
       return timeMachineMemCache.get(memKey);
     }
@@ -833,8 +845,9 @@ const ONAIR_LIVE = (() => {
       typeof location !== "undefined" &&
       (location.protocol === "file:" || location.hostname === "localhost" || location.hostname === "127.0.0.1");
 
+    const customProxy = getCustomProxyPrefix();
     const [tv24Map, tvmGbList, tvmIeList, bbc1Events] = await Promise.all([
-      isLocalProxy ? fetchTv24DayMap(isoDate).catch(() => null) : Promise.resolve(null),
+      (isLocalProxy || customProxy) ? fetchTv24DayMap(isoDate).catch(() => null) : Promise.resolve(null),
       fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => []),
       fetchJson(`https://api.tvmaze.com/schedule?country=IE&date=${isoDate}`).catch(() => []),
       bbc1 ? fetchBbcGenomeService(getBbcGenomeServiceSlug(bbc1.name, region.id), isoDate).catch(() => null) : Promise.resolve(null)
@@ -1843,9 +1856,11 @@ const ONAIR_LIVE = (() => {
   function buildProxyUrls(targetUrl, includeDirect = true) {
     const isLocalHttp = typeof location !== "undefined" && (location.hostname === "localhost" || location.hostname === "127.0.0.1") && location.protocol.startsWith("http");
     const isFile = typeof location !== "undefined" && location.protocol === "file:";
+    const customProxy = getCustomProxyPrefix();
     const list = [];
     if (isLocalHttp) list.push(`/api/proxy?url=${encodeURIComponent(targetUrl)}`);
     else if (isFile) list.push(`http://127.0.0.1:8765/api/proxy?url=${encodeURIComponent(targetUrl)}`);
+    if (customProxy) list.push(`${customProxy}${encodeURIComponent(targetUrl)}`);
     if (includeDirect) list.push(targetUrl);
     list.push(`https://api.cors.lol/?url=${encodeURIComponent(targetUrl)}`);
     list.push(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);

@@ -2556,6 +2556,17 @@
           </label>
         </div>
 
+        <div class="settings-row" style="flex-wrap:wrap; gap:10px;">
+          <div class="settings-row-label">
+            <strong>Custom CORS Relay URL (GitHub Pages)</strong>
+            <span>Optional private Cloudflare Worker prefix (e.g. <code>https://your-worker.workers.dev/?url=</code>) to bypass public 429 limits for BBC Genome, tv24, Pluto &amp; Tubi.</span>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input id="settingCustomProxyInput" type="url" class="settings-select" style="min-width:240px;" placeholder="https://your-worker.workers.dev/?url=" value="${escapeHtml(localStorage.getItem("onair_custom_proxy") || "")}" />
+            <button id="settingSaveProxyBtn" class="btn-secondary" type="button" style="padding:6px 12px;">Save</button>
+          </div>
+        </div>
+
         <div class="settings-row">
           <div class="settings-row-label">
             <strong>Live Schedule Auto-Refresh</strong>
@@ -2678,6 +2689,16 @@
         renderSettings();
         if (typeof syncDebugConsoleVisibility === "function") syncDebugConsoleVisibility();
         showToast(state.debugMode ? "Debug Mode enabled — look for 🛠️ Debug at bottom-left" : "Debug Mode disabled");
+      };
+    }
+
+    const saveProxyBtn = document.getElementById("settingSaveProxyBtn");
+    const proxyInput = document.getElementById("settingCustomProxyInput");
+    if (saveProxyBtn && proxyInput) {
+      saveProxyBtn.onclick = () => {
+        const val = proxyInput.value.trim();
+        localStorage.setItem("onair_custom_proxy", val);
+        showToast(val ? "Custom CORS relay saved" : "Custom CORS relay cleared");
       };
     }
 
@@ -3396,7 +3417,7 @@
     showToast(`Region switched to ${reg.name}`);
   }
 
-  async function loadTimeMachineDate(isoDate) {
+  async function loadTimeMachineDate(isoDate, force = false) {
     if (!isoDate) {
       exitTimeMachine();
       return;
@@ -3440,11 +3461,14 @@
             <span style="color:var(--text-muted); margin-left:8px;">${count} programmes (${escapeHtml(src)})</span>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button id="tmRefreshBtn" class="ghost-btn" type="button" style="padding:5px 10px; font-size:12px;">&#8635; Refresh</button>
             <a href="${escapeHtml(genomeUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">BBC Genome ↗</a>
             <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">tv24.co.uk ↗</a>
             <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
           </div>
         `;
+        const refreshBtn = document.getElementById("tmRefreshBtn");
+        if (refreshBtn) refreshBtn.onclick = () => loadTimeMachineDate(isoDate, true);
         const exitBtn = document.getElementById("tmExitBtn");
         if (exitBtn) exitBtn.onclick = exitTimeMachine;
       }
@@ -3456,7 +3480,7 @@
           timeMachineEpg = updatedRes.schedulesBySid || {};
           renderTmBanner(updatedRes);
           renderEPG(false);
-        }).catch(() => null)
+        }, force).catch(() => null)
       : null;
 
     if (state.timeMachineDate !== isoDate) return;
