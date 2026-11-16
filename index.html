@@ -10,7 +10,7 @@
     href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="styles.css?v=20261116d" />
+  <link rel="stylesheet" href="styles.css?v=20261116e" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -176,10 +176,14 @@
             <div class="date-strip" id="dateStrip" role="tablist" aria-label="Select day"></div>
 
             <div class="time-jumps">
-              <label class="tm-control" title="Jump to any past or future TV guide date">
-                <span>🕰️ Time Machine</span>
-                <input type="date" id="timeMachineDate" class="tm-date-input" min="1990-01-01" max="2030-12-31" aria-label="Time Machine TV Guide Date" />
-              </label>
+              <div class="tm-picker-wrap" id="tmPickerWrap">
+                <button id="timeMachineBtn" class="tm-control" type="button" aria-haspopup="true" aria-expanded="false" title="Jump to any past or future TV guide date">
+                  <span>🕰️</span>
+                  <span id="timeMachineBtnLabel">Time Machine</span>
+                  <span style="opacity:0.6; font-size:10px;">▾</span>
+                </button>
+                <div id="tmPopover" class="tm-popover hidden" role="dialog" aria-label="Time Machine Calendar"></div>
+              </div>
               <button class="jump-btn jump-now" data-jump="now" type="button">
                 <span class="live-dot"></span> Now
               </button>
@@ -423,12 +427,12 @@
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   </div>
 
-  <script src="data.js?v=20261116d"></script>
-  <script src="fast_channels_seed.js?v=20261116d"></script>
-  <script src="fast_epg_snapshot.js?v=20261116d"></script>
-  <script src="vault_data.js?v=20261116d"></script>
-  <script src="past_epg_data.js?v=20261116d"></script>
-  <script src="live_feeds.js?v=20261116d"></script>
-  <script src="app.js?v=20261116d"></script>
+  <script src="data.js?v=20261116e"></script>
+  <script src="fast_channels_seed.js?v=20261116e"></script>
+  <script src="fast_epg_snapshot.js?v=20261116e"></script>
+  <script src="vault_data.js?v=20261116e"></script>
+  <script src="past_epg_data.js?v=20261116e"></script>
+  <script src="live_feeds.js?v=20261116e"></script>
+  <script src="app.js?v=20261116e"></script>
 </body>
 </html>

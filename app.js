@@ -185,7 +185,10 @@
     viewPanels: document.querySelectorAll(".view-panel"),
     platformPills: document.getElementById("platformPills"),
     regionSelect: document.getElementById("regionSelect"),
-    timeMachineDate: document.getElementById("timeMachineDate"),
+    tmPickerWrap: document.getElementById("tmPickerWrap"),
+    timeMachineBtn: document.getElementById("timeMachineBtn"),
+    timeMachineBtnLabel: document.getElementById("timeMachineBtnLabel"),
+    tmPopover: document.getElementById("tmPopover"),
     timeMachineBanner: document.getElementById("timeMachineBanner"),
     epgCategoryPills: document.getElementById("epgCategoryPills"),
     dateStrip: document.getElementById("dateStrip"),
@@ -3230,9 +3233,21 @@
     }
     state.timeMachineDate = isoDate;
     timeMachineEpg = {};
+    if (el.tmPopover) el.tmPopover.classList.add("hidden");
+    if (el.timeMachineBtn) {
+      el.timeMachineBtn.classList.add("is-active");
+      el.timeMachineBtn.setAttribute("aria-expanded", "false");
+    }
+    const shortPretty = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    });
+    if (el.timeMachineBtnLabel) el.timeMachineBtnLabel.textContent = shortPretty;
+
     if (el.timeMachineBanner) {
       el.timeMachineBanner.classList.remove("hidden");
-      el.timeMachineBanner.innerHTML = `<span>🕰️ Loading Time Machine TV Guide for <strong>${escapeHtml(isoDate)}</strong>...</span>`;
+      el.timeMachineBanner.innerHTML = `<span>🕰️ Loading Time Machine TV Guide for <strong>${escapeHtml(shortPretty)}</strong>...</span>`;
     }
     renderEPG(false);
 
@@ -3271,7 +3286,12 @@
   function exitTimeMachine() {
     state.timeMachineDate = null;
     timeMachineEpg = null;
-    if (el.timeMachineDate) el.timeMachineDate.value = "";
+    if (el.tmPopover) el.tmPopover.classList.add("hidden");
+    if (el.timeMachineBtn) {
+      el.timeMachineBtn.classList.remove("is-active");
+      el.timeMachineBtn.setAttribute("aria-expanded", "false");
+    }
+    if (el.timeMachineBtnLabel) el.timeMachineBtnLabel.textContent = "Time Machine";
     if (el.timeMachineBanner) {
       el.timeMachineBanner.classList.add("hidden");
       el.timeMachineBanner.innerHTML = "";
@@ -3280,13 +3300,147 @@
     ensureSchedulesForChannels(getFilteredChannels(state.epgCategory), state.dayOffset, false);
   }
 
+  function initTimeMachinePicker() {
+    if (!el.timeMachineBtn || !el.tmPopover) return;
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    let viewYear = now.getFullYear();
+    let viewMonth = now.getMonth(); // 0..11
+
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const maxYear = now.getFullYear() + 1;
+    const minYear = 1990;
+
+    function renderCalendar() {
+      const yearOptions = [];
+      for (let y = maxYear; y >= minYear; y--) {
+        yearOptions.push(`<option value="${y}" ${y === viewYear ? "selected" : ""}>${y}</option>`);
+      }
+      const monthOptions = months.map((m, idx) => `<option value="${idx}" ${idx === viewMonth ? "selected" : ""}>${m}</option>`);
+
+      const firstDay = new Date(viewYear, viewMonth, 1);
+      const startOffset = (firstDay.getDay() + 6) % 7; // Mon=0 .. Sun=6
+      const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+      const cells = [];
+      for (let i = 0; i < startOffset; i++) {
+        cells.push(`<span></span>`);
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const iso = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        const isToday = iso === todayIso;
+        const isSelected = iso === state.timeMachineDate;
+        cells.push(`<button type="button" class="tm-day-btn ${isToday ? "is-today" : ""} ${isSelected ? "is-selected" : ""}" data-tm-iso="${iso}">${d}</button>`);
+      }
+
+      const oneYrAgo = new Date(now);
+      oneYrAgo.setFullYear(now.getFullYear() - 1);
+      const fiveYrAgo = new Date(now);
+      fiveYrAgo.setFullYear(now.getFullYear() - 5);
+      const fmtIso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+
+      const presets = [
+        { label: "1 Year Ago", iso: fmtIso(oneYrAgo) },
+        { label: "5 Years Ago", iso: fmtIso(fiveYrAgo) },
+        { label: "27 May 2020", iso: "2020-05-27" },
+        { label: "27 Jul 2012", iso: "2012-07-27" },
+        { label: "Xmas 2015", iso: "2015-12-25" },
+        { label: "Live (Today)", iso: "" }
+      ];
+
+      el.tmPopover.innerHTML = `
+        <div class="tm-pop-header">
+          <button type="button" class="tm-pop-nav" id="tmPrevMonth" aria-label="Previous month">&lsaquo;</button>
+          <div class="tm-pop-selects">
+            <select id="tmMonthSelect" class="tm-pop-select" aria-label="Month">${monthOptions.join("")}</select>
+            <select id="tmYearSelect" class="tm-pop-select" aria-label="Year">${yearOptions.join("")}</select>
+          </div>
+          <button type="button" class="tm-pop-nav" id="tmNextMonth" aria-label="Next month">&rsaquo;</button>
+        </div>
+        <div class="tm-weekdays"><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span></div>
+        <div class="tm-days-grid">${cells.join("")}</div>
+        <div class="tm-presets">
+          ${presets.map((p) => `<button type="button" class="tm-preset-btn" data-tm-preset="${p.iso}">${p.label}</button>`).join("")}
+        </div>
+      `;
+
+      document.getElementById("tmPrevMonth").onclick = (e) => {
+        e.stopPropagation();
+        viewMonth--;
+        if (viewMonth < 0) {
+          viewMonth = 11;
+          viewYear = Math.max(minYear, viewYear - 1);
+        }
+        renderCalendar();
+      };
+      document.getElementById("tmNextMonth").onclick = (e) => {
+        e.stopPropagation();
+        viewMonth++;
+        if (viewMonth > 11) {
+          viewMonth = 0;
+          viewYear = Math.min(maxYear, viewYear + 1);
+        }
+        renderCalendar();
+      };
+      document.getElementById("tmMonthSelect").onchange = (e) => {
+        viewMonth = Number(e.target.value);
+        renderCalendar();
+      };
+      document.getElementById("tmYearSelect").onchange = (e) => {
+        viewYear = Number(e.target.value);
+        renderCalendar();
+      };
+      el.tmPopover.querySelectorAll("[data-tm-iso]").forEach((btn) => {
+        btn.onclick = () => loadTimeMachineDate(btn.dataset.tmIso);
+      });
+      el.tmPopover.querySelectorAll("[data-tm-preset]").forEach((btn) => {
+        btn.onclick = () => {
+          const iso = btn.dataset.tmPreset;
+          if (!iso) {
+            exitTimeMachine();
+          } else {
+            const [y, m] = iso.split("-").map(Number);
+            viewYear = y;
+            viewMonth = m - 1;
+            loadTimeMachineDate(iso);
+          }
+        };
+      });
+    }
+
+    el.timeMachineBtn.onclick = (e) => {
+      e.stopPropagation();
+      const willOpen = el.tmPopover.classList.contains("hidden");
+      if (willOpen) {
+        if (state.timeMachineDate) {
+          const [y, m] = state.timeMachineDate.split("-").map(Number);
+          if (y && m) {
+            viewYear = y;
+            viewMonth = m - 1;
+          }
+        }
+        renderCalendar();
+        el.tmPopover.classList.remove("hidden");
+        el.timeMachineBtn.setAttribute("aria-expanded", "true");
+      } else {
+        el.tmPopover.classList.add("hidden");
+        el.timeMachineBtn.setAttribute("aria-expanded", "false");
+      }
+    };
+
+    document.addEventListener("click", (e) => {
+      if (el.tmPickerWrap && !el.tmPickerWrap.contains(e.target)) {
+        el.tmPopover.classList.add("hidden");
+        el.timeMachineBtn.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
   function init() {
     applyTheme();
     renderPlatformPills();
     renderRegionSelect();
-    if (el.timeMachineDate) {
-      el.timeMachineDate.onchange = (e) => loadTimeMachineDate(e.target.value);
-    }
+    initTimeMachinePicker();
     renderCategoryPills();
     renderDateStrip();
     renderWatchlist();
