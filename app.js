@@ -35,6 +35,7 @@
     theme: localStorage.getItem("onair_theme") || "system",
     refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 30),
     lowDataMode: localStorage.getItem("onair_low_data") === "1",
+    debugMode: localStorage.getItem("onair_debug_mode") === "1",
     seasonOverride: localStorage.getItem("onair_season_override") || "auto",
     seasonalSourceFilter: "all",
     wtwAheadDayOffset: 0,
@@ -2546,6 +2547,17 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>Debug Mode (Data Pull Inspector)</strong>
+            <span>Shows a live floating console with API requests, latencies, cache hits, fallbacks, and 429 cooldowns.</span>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
+            <input id="settingDebugModeToggle" type="checkbox" ${state.debugMode ? "checked" : ""} />
+            ${state.debugMode ? "Enabled" : "Off"}
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Live Schedule Auto-Refresh</strong>
             <span>Only refreshes live schedules when Low-Data Mode is off (never re-fetches stored Show Vault links).</span>
           </div>
@@ -2656,6 +2668,17 @@
     const settingRegionEl = document.getElementById("settingRegionSelect");
     if (settingRegionEl) {
       settingRegionEl.onchange = (e) => switchRegion(e.target.value);
+    }
+
+    const settingDebugEl = document.getElementById("settingDebugModeToggle");
+    if (settingDebugEl) {
+      settingDebugEl.onchange = (e) => {
+        state.debugMode = Boolean(e.target.checked);
+        localStorage.setItem("onair_debug_mode", state.debugMode ? "1" : "0");
+        renderSettings();
+        if (typeof syncDebugConsoleVisibility === "function") syncDebugConsoleVisibility();
+        showToast(state.debugMode ? "Debug Mode enabled — look for 🛠️ Debug at bottom-left" : "Debug Mode disabled");
+      };
     }
 
     document.getElementById("settingSeasonSelect").onchange = (e) => {
@@ -3604,11 +3627,99 @@
     });
   }
 
+  let syncDebugConsoleVisibility = null;
+
+  function initDebugConsole() {
+    const wrap = document.getElementById("debugDrawerWrap");
+    const fab = document.getElementById("debugFab");
+    const panel = document.getElementById("debugPanel");
+    const listEl = document.getElementById("debugLogList");
+    const summaryEl = document.getElementById("debugSummaryLine");
+    const badgeEl = document.getElementById("debugCountBadge");
+    const filterBar = document.getElementById("debugFilterBar");
+    const copyBtn = document.getElementById("debugCopyBtn");
+    const clearBtn = document.getElementById("debugClearBtn");
+    const closeBtn = document.getElementById("debugCloseBtn");
+    if (!wrap || !fab || !panel || !listEl) return;
+
+    let levelFilter = "all";
+
+    function renderDebugLogs() {
+      const logs = ONAIR_LIVE.getDebugLogs ? ONAIR_LIVE.getDebugLogs() : [];
+      if (badgeEl) badgeEl.textContent = String(logs.length);
+
+      const health = ONAIR_LIVE.getFeedHealth ? ONAIR_LIVE.getFeedHealth() : {};
+      const regionShort = ONAIR_LIVE.getRegion ? ONAIR_LIVE.getRegion().short : "UK";
+      const backoffs = health.backoffHosts && health.backoffHosts.length ? `Backoff: ${health.backoffHosts.join(", ")}` : "No backoffs";
+      if (summaryEl) {
+        summaryEl.textContent = `Region: ${regionShort} • Sky: ${health.sky ? health.sky.status : "?"} • Pluto: ${health.pluto ? health.pluto.status : "?"} • Tubi: ${health.tubi ? health.tubi.status : "?"} • ${backoffs}`;
+      }
+
+      if (panel.classList.contains("hidden")) return;
+      const filtered = levelFilter === "all" ? logs : logs.filter((l) => l.level === levelFilter);
+      if (!filtered.length) {
+        listEl.innerHTML = `<div style="padding:16px; color:var(--text-muted); text-align:center;">No debug events recorded for this filter yet.</div>`;
+        return;
+      }
+      listEl.innerHTML = filtered
+        .map(
+          (l) => `
+          <div class="debug-log-row debug-level-${escapeHtml(l.level || "info")}">
+            <span style="color:var(--text-muted);">${escapeHtml(l.timeStr)}</span>
+            <span class="debug-src-tag">${escapeHtml(l.source)}</span>
+            <span style="word-break:break-word;">${escapeHtml(l.message)}</span>
+            <span style="color:var(--text-muted);">${l.ms !== null && l.ms !== undefined ? `${l.ms}ms` : ""}</span>
+          </div>
+        `
+        )
+        .join("");
+    }
+
+    syncDebugConsoleVisibility = () => {
+      wrap.classList.toggle("hidden", !state.debugMode);
+      if (!state.debugMode) panel.classList.add("hidden");
+      renderDebugLogs();
+    };
+
+    fab.onclick = () => {
+      panel.classList.toggle("hidden");
+      renderDebugLogs();
+    };
+    if (closeBtn) closeBtn.onclick = () => panel.classList.add("hidden");
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        if (ONAIR_LIVE.clearDebugLogs) ONAIR_LIVE.clearDebugLogs();
+        renderDebugLogs();
+      };
+    }
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        const logs = ONAIR_LIVE.getDebugLogs ? ONAIR_LIVE.getDebugLogs() : [];
+        const text = logs.map((l) => `[${l.timeStr}] [${l.level.toUpperCase()}] ${l.source}: ${l.message}${l.ms != null ? ` (${l.ms}ms)` : ""}`).join("\n");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => showToast("Debug logs copied"));
+        }
+      };
+    }
+    if (filterBar) {
+      filterBar.querySelectorAll("[data-dbg-level]").forEach((btn) => {
+        btn.onclick = () => {
+          levelFilter = btn.dataset.dbgLevel || "all";
+          filterBar.querySelectorAll("[data-dbg-level]").forEach((b) => b.classList.toggle("is-active", b === btn));
+          renderDebugLogs();
+        };
+      });
+    }
+    window.addEventListener("onair:debug-log", renderDebugLogs);
+    syncDebugConsoleVisibility();
+  }
+
   function init() {
     applyTheme();
     renderPlatformPills();
     renderRegionSelect();
     initTimeMachinePicker();
+    initDebugConsole();
     renderCategoryPills();
     renderDateStrip();
     renderWatchlist();

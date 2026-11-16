@@ -411,6 +411,45 @@ const ONAIR_LIVE = (() => {
     }
   }
 
+  const debugLogs = [];
+  const MAX_DEBUG_LOGS = 150;
+
+  function logDebug(source, message, level = "info", ms = null) {
+    const entry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ts: Date.now(),
+      timeStr: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+      source: source || "System",
+      message: String(message || ""),
+      level,
+      ms
+    };
+    debugLogs.unshift(entry);
+    if (debugLogs.length > MAX_DEBUG_LOGS) debugLogs.length = MAX_DEBUG_LOGS;
+    try {
+      if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        window.dispatchEvent(new CustomEvent("onair:debug-log", { detail: entry }));
+      }
+    } catch {
+      // Ignore event dispatch errors
+    }
+  }
+
+  function getDebugLogs() {
+    return [...debugLogs];
+  }
+
+  function clearDebugLogs() {
+    debugLogs.length = 0;
+    try {
+      if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        window.dispatchEvent(new CustomEvent("onair:debug-log"));
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
   async function fetchJson(url, timeoutMs = 10000) {
     let host = "";
     try {
@@ -418,8 +457,10 @@ const ONAIR_LIVE = (() => {
     } catch {
       host = "";
     }
+    const shortUrl = String(url).replace(/^https?:\/\//, "").slice(0, 78);
     const backoffUntil = host ? hostBackoffUntil.get(host) || 0 : 0;
     if (backoffUntil > Date.now()) {
+      logDebug(host || "Network", `Skipped (cooldown active): ${shortUrl}`, "warn");
       throw new Error(`Rate-limit cooldown for ${host}`);
     }
 
@@ -428,16 +469,29 @@ const ONAIR_LIVE = (() => {
     }
 
     const reqPromise = (async () => {
+      const t0 = Date.now();
       const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
       try {
         const res = await fetch(url, controller ? { signal: controller.signal } : undefined);
+        const elapsed = Date.now() - t0;
         if (res.status === 429 || res.status === 503) {
           if (host) hostBackoffUntil.set(host, Date.now() + 5 * 60 * 1000);
+          logDebug(host || "HTTP", `HTTP ${res.status} — 5m backoff triggered (${shortUrl})`, "warn", elapsed);
           throw new Error(`HTTP ${res.status}`);
         }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
+        if (!res.ok) {
+          logDebug(host || "HTTP", `HTTP ${res.status} (${shortUrl})`, "error", elapsed);
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        logDebug(host || "HTTP", `200 OK (${shortUrl})`, "ok", elapsed);
+        return json;
+      } catch (err) {
+        if (!/HTTP (429|503|\d+)/.test(err && err.message || "")) {
+          logDebug(host || "Network", `${err && err.name === "AbortError" ? "Timeout" : (err && err.message) || "Fetch failed"} (${shortUrl})`, "error", Date.now() - t0);
+        }
+        throw err;
       } finally {
         if (timer) clearTimeout(timer);
         inFlightRequests.delete(url);
@@ -503,6 +557,7 @@ const ONAIR_LIVE = (() => {
     const byRegion = cache.channelsByRegion || {};
     const cachedReg = byRegion[region.id];
     if (!force && cachedReg && cachedReg.ver === 5 && Date.now() - cachedReg.ts < CHANNELS_TTL_MS) {
+      logDebug("Channels", `Cache hit for region "${region.short}" (${cachedReg.list.length} channels)`, "info");
       return cachedReg.list;
     }
 
@@ -762,8 +817,10 @@ const ONAIR_LIVE = (() => {
     const region = getRegion();
     const memKey = `${isoDate}_${region.id}`;
     if (timeMachineMemCache.has(memKey)) {
+      logDebug("TimeMachine", `Session cache hit for ${isoDate} (${region.short})`, "info");
       return timeMachineMemCache.get(memKey);
     }
+    logDebug("TimeMachine", `Fetching ${isoDate} (${region.short}) — BBC1=${bbc1 ? bbc1.name : "none"}, BBC rest=${bbcRest.map((c) => c.name).join(", ") || "none"}`, "info");
 
     // Polite multi-pass cap: BBC One immediately, then stagger remaining terrestrial BBC channels (4s, 9s)
     // plus a single retry at 7s if BBC One missed on initial load (zero 429 bursts)
@@ -2194,6 +2251,9 @@ const ONAIR_LIVE = (() => {
     getVaultStats,
     getStorageReport,
     getFeedHealth,
+    getDebugLogs,
+    clearDebugLogs,
+    logDebug,
     buildExportVaultJs,
     clearEpgCache,
     clearShowVault
