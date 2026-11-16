@@ -36,8 +36,10 @@
     refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 30),
     lowDataMode: localStorage.getItem("onair_low_data") === "1",
     seasonOverride: localStorage.getItem("onair_season_override") || "auto",
-    seasonalSourceFilter: "all"
+    seasonalSourceFilter: "all",
+    timeMachineDate: null
   };
+  let timeMachineEpg = null;
 
   // Live Data Stores (100% Live EPG, Zero Fake Schedules)
   function buildFastSeedChannels() {
@@ -101,12 +103,16 @@
   function getSchedule(channelId, dayOffset) {
     const ch = liveChannels.find((c) => c.id === channelId);
     if (!ch || !ch.sid) return [];
+    if (state.timeMachineDate && timeMachineEpg) {
+      return timeMachineEpg[ch.sid] || [];
+    }
     const dayMap = liveEpgByDay.get(dayOffset);
     if (!dayMap || !dayMap[ch.sid]) return null; // null = not fetched yet
     return dayMap[ch.sid];
   }
 
   async function ensureSchedulesForChannels(channels, dayOffset, force = false) {
+    if (state.timeMachineDate) return;
     if (state.platform === "pluto" && ONAIR_LIVE.fetchPlutoTvData) {
       const hasPlutoForDay = !force && livePlutoFetchedDays.has(dayOffset);
       if (!hasPlutoForDay) {
@@ -179,6 +185,8 @@
     viewPanels: document.querySelectorAll(".view-panel"),
     platformPills: document.getElementById("platformPills"),
     regionSelect: document.getElementById("regionSelect"),
+    timeMachineDate: document.getElementById("timeMachineDate"),
+    timeMachineBanner: document.getElementById("timeMachineBanner"),
     epgCategoryPills: document.getElementById("epgCategoryPills"),
     dateStrip: document.getElementById("dateStrip"),
     epgScrollContainer: document.getElementById("epgScrollContainer"),
@@ -3215,10 +3223,70 @@
     showToast(`Region switched to ${reg.name}`);
   }
 
+  async function loadTimeMachineDate(isoDate) {
+    if (!isoDate) {
+      exitTimeMachine();
+      return;
+    }
+    state.timeMachineDate = isoDate;
+    timeMachineEpg = {};
+    if (el.timeMachineBanner) {
+      el.timeMachineBanner.classList.remove("hidden");
+      el.timeMachineBanner.innerHTML = `<span>🕰️ Loading Time Machine TV Guide for <strong>${escapeHtml(isoDate)}</strong>...</span>`;
+    }
+    renderEPG(false);
+
+    const res = ONAIR_LIVE.fetchTimeMachineDay
+      ? await ONAIR_LIVE.fetchTimeMachineDay(isoDate, liveChannels).catch(() => null)
+      : null;
+
+    if (state.timeMachineDate !== isoDate) return;
+    timeMachineEpg = (res && res.schedulesBySid) || {};
+    const prettyDate = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric"
+    });
+    const tv24Url = (res && res.tv24Url) || `https://tv24.co.uk/tv/${isoDate}`;
+    const count = (res && res.totalEvents) || 0;
+    const src = (res && res.sourceLabel) || "Archive";
+    if (el.timeMachineBanner) {
+      el.timeMachineBanner.innerHTML = `
+        <div>
+          <strong>🕰️ Time Machine: ${escapeHtml(prettyDate)}</strong>
+          <span style="color:var(--text-muted); margin-left:8px;">${count} programmes (${escapeHtml(src)})</span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <a href="${escapeHtml(tv24Url)}" target="_blank" rel="noopener noreferrer" class="ghost-btn" style="text-decoration:none; padding:5px 10px; font-size:12px;">Open on tv24.co.uk ↗</a>
+          <button id="tmExitBtn" class="btn-primary" type="button" style="padding:5px 12px; font-size:12px;">Back to Live Guide</button>
+        </div>
+      `;
+      const exitBtn = document.getElementById("tmExitBtn");
+      if (exitBtn) exitBtn.onclick = exitTimeMachine;
+    }
+    renderEPG(false);
+  }
+
+  function exitTimeMachine() {
+    state.timeMachineDate = null;
+    timeMachineEpg = null;
+    if (el.timeMachineDate) el.timeMachineDate.value = "";
+    if (el.timeMachineBanner) {
+      el.timeMachineBanner.classList.add("hidden");
+      el.timeMachineBanner.innerHTML = "";
+    }
+    renderEPG(false);
+    ensureSchedulesForChannels(getFilteredChannels(state.epgCategory), state.dayOffset, false);
+  }
+
   function init() {
     applyTheme();
     renderPlatformPills();
     renderRegionSelect();
+    if (el.timeMachineDate) {
+      el.timeMachineDate.onchange = (e) => loadTimeMachineDate(e.target.value);
+    }
     renderCategoryPills();
     renderDateStrip();
     renderWatchlist();

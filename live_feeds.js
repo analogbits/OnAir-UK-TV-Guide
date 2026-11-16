@@ -582,6 +582,179 @@ const ONAIR_LIVE = (() => {
   // 2. Fetch Live Linear Schedules for a list of SIDs on a given dayOffset
   const inFlightSids = new Set();
 
+      function parseTv24TimeToMin(timeStr) {
+    const m = String(timeStr || "").trim().match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+    if (!m) return null;
+    let h = Number(m[1]);
+    const min = Number(m[2]);
+    const ap = m[3].toLowerCase();
+    if (ap === "pm" && h !== 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    return h * 60 + min;
+  }
+
+  function normTv24ChName(n) {
+    return String(n || "")
+      .toLowerCase()
+      .replace(/\b(hd|uhd|sd|lon|london|uk|ni|scot|wal|wales)\b/g, "")
+      .replace(/[^a-z0-9+]/g, "")
+      .trim();
+  }
+
+  async function fetchTv24DayMap(isoDate) {
+    const targetUrl = `https://tv24.co.uk/x/tvguide/freeview/0/${isoDate}/0`;
+    let raw = null;
+    for (const url of buildProxyUrls(targetUrl, false)) {
+      try {
+        const res = await fetchJson(url, 9000);
+        if (Array.isArray(res) && res.length > 0) {
+          raw = res;
+          break;
+        }
+      } catch {
+        // Try next proxy
+      }
+    }
+    if (!raw) return null;
+
+    const byCh = {};
+    raw.forEach((item) => {
+      const html = item && item.schedules;
+      if (!html) return;
+      const chMatch = html.match(/<h3[^>]*>([^<]+)<\/h3>/i);
+      if (!chMatch) return;
+      const chName = chMatch[1].trim();
+      const nk = normTv24ChName(chName);
+      if (!nk) return;
+
+      const rows = [];
+      const re = /<span class="time">([^<]+)<\/span>.*?<span class="actual">([^<]+)<\/span>/gi;
+      let m;
+      while ((m = re.exec(html)) !== null) {
+        const startMin = parseTv24TimeToMin(m[1]);
+        const title = m[2]
+          .replace(/&amp;/g, "&")
+          .replace(/&#039;|&apos;/g, "'")
+          .replace(/&quot;/g, '"')
+          .trim();
+        if (startMin !== null && title) {
+          rows.push({ title, startMin });
+        }
+      }
+      if (!rows.length) return;
+
+      const mapped = [];
+      for (let i = 0; i < rows.length; i++) {
+        let s = rows[i].startMin;
+        if (i > 0 && s < rows[i - 1].startMin) s += 24 * 60;
+        let e = i + 1 < rows.length ? rows[i + 1].startMin : s + 60;
+        if (e <= s) e += 24 * 60;
+        if (e <= 360 || s >= 24 * 60) continue;
+        const clampedStart = Math.max(360, s);
+        const clampedEnd = Math.min(24 * 60, e);
+        if (clampedEnd > clampedStart) {
+          mapped.push({ title: rows[i].title, startMin: clampedStart, endMin: clampedEnd });
+        }
+      }
+      if (mapped.length) byCh[nk] = mapped;
+    });
+
+    return Object.keys(byCh).length ? byCh : null;
+  }
+
+  async function fetchTimeMachineDay(isoDate, channelsList = []) {
+    const [tv24Map, tvmList] = await Promise.all([
+      fetchTv24DayMap(isoDate).catch(() => null),
+      fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`).catch(() => [])
+    ]);
+
+    const schedulesBySid = {};
+    let totalEvents = 0;
+    const sources = [];
+    if (tv24Map) sources.push("tv24.co.uk");
+    if (Array.isArray(tvmList) && tvmList.length) sources.push("TVMaze UK");
+
+    (channelsList || []).forEach((ch) => {
+      if (!ch || !ch.sid || ch.plutoSlug || ch.tubiId) return;
+      const nk = normTv24ChName(ch.name);
+      const tv24Events = tv24Map && (tv24Map[nk] || tv24Map[nk.replace(/1$/, "")]);
+      if (tv24Events && tv24Events.length) {
+        schedulesBySid[ch.sid] = tv24Events.map((ev, idx) => ({
+          id: `tm-${isoDate}-${ch.sid}-${idx}`,
+          channelId: ch.id,
+          sid: ch.sid,
+          dayOffset: 0,
+          title: ev.title,
+          genre: ch.category || "Entertainment",
+          rating: "PG",
+          ep: isoDate,
+          desc: `Historical broadcast on ${ch.name} (${isoDate}).`,
+          cast: ch.category || "TV",
+          stars: null,
+          isNew: false,
+          isRepeat: false,
+          isLiveData: true,
+          thisWeek: false,
+          interests: inferInterestsFromEvent(ev.title, "", ch.category || "Entertainment"),
+          startMin: ev.startMin,
+          endMin: ev.endMin
+        }));
+        totalEvents += schedulesBySid[ch.sid].length;
+        return;
+      }
+
+      if (Array.isArray(tvmList) && tvmList.length) {
+        const chLower = (ch.name || "").toLowerCase().replace(/\b(hd|uhd|sd|lon|london|ni|scot|wal)\b/g, "").trim();
+        const matches = tvmList
+          .filter((ep) => {
+            const net = ep.show && ep.show.network && ep.show.network.name ? ep.show.network.name.toLowerCase() : "";
+            return net && (chLower.includes(net) || net.includes(chLower));
+          })
+          .map((ep) => {
+            const parts = (ep.airtime || "12:00").split(":");
+            const startMin = Math.max(360, Number(parts[0]) * 60 + Number(parts[1] || 0));
+            const endMin = Math.min(24 * 60, startMin + (ep.runtime || 60));
+            if (endMin <= startMin) return null;
+            const show = ep.show || {};
+            const genre = mapTvmazeShowToCategory(show) || ch.category || "Entertainment";
+            return {
+              id: `tm-tvm-${ep.id}`,
+              channelId: ch.id,
+              sid: ch.sid,
+              dayOffset: 0,
+              title: show.name || ep.name || "Untitled",
+              genre,
+              rating: "PG",
+              ep: ep.season && ep.number ? `Series ${ep.season}, Ep ${ep.number}` : ep.name || genre,
+              desc: (ep.summary || show.summary || `${show.name || "Programme"} (${isoDate})`).replace(/<[^>]+>/g, "").trim(),
+              cast: genre,
+              stars: show.rating && show.rating.average ? Number((show.rating.average / 2).toFixed(1)) : null,
+              isNew: true,
+              isRepeat: false,
+              isLiveData: true,
+              thisWeek: false,
+              interests: inferInterestsFromEvent(show.name || "", ep.summary || "", genre),
+              startMin,
+              endMin
+            };
+          })
+          .filter(Boolean);
+        if (matches.length) {
+          schedulesBySid[ch.sid] = matches;
+          totalEvents += matches.length;
+        }
+      }
+    });
+
+    return {
+      isoDate,
+      schedulesBySid,
+      totalEvents,
+      sourceLabel: sources.length ? sources.join(" + ") : "No archive data",
+      tv24Url: `https://tv24.co.uk/tv/${isoDate}`
+    };
+  }
+
   async function fetchSkySchedulesForSids(sids, dayOffset = 0, force = false) {
     if (!sids || sids.length === 0) return {};
     const dateStr = getSkyDateString(dayOffset);
@@ -733,7 +906,7 @@ const ONAIR_LIVE = (() => {
 
       if (vaultDirty) saveVault(vault);
 
-      // Backup #1 (Freeview UK 165-channel full schedule), Backup #2 (TVMaze UK), Backup #3 (stale cache)
+  // Backup #1 (Freeview UK 165-channel full schedule), Backup #2 (tv24.co.uk), Backup #3 (TVMaze UK), Backup #4 (stale cache)
       const missingFromSky = toFetch.filter((sid) => !gotSids.has(String(sid)));
       if (missingFromSky.length > 0) {
         // Freeview helper: parse ISO8601 duration "PT1H30M" -> minutes
@@ -792,6 +965,7 @@ const ONAIR_LIVE = (() => {
         }
 
         let tvmazeUkList = null;
+        let tv24ByChannel = undefined;
         for (const sid of missingFromSky) {
           const rawName = chNameBySid.get(String(sid)) || "";
           const nk = normChName(rawName);
@@ -842,6 +1016,37 @@ const ONAIR_LIVE = (() => {
           }
 
           // Backup #2: TVMaze UK linear broadcast
+          // Backup #2: tv24.co.uk single-day schedule backup (fetched lazily once per day if needed)
+          if (tv24ByChannel === undefined) {
+            tv24ByChannel = await fetchTv24DayMap(isoDate).catch(() => null);
+          }
+          const tv24Events = tv24ByChannel && (tv24ByChannel[nk] || tv24ByChannel[nk.replace(/1$/, "")]);
+          if (tv24Events && tv24Events.length > 0) {
+            const mappedTv24 = tv24Events.map((ev, idx) => ({
+              id: `tv24-${dateStr}-${sid}-${idx}`,
+              channelId: `sky-${sid}`,
+              sid,
+              dayOffset,
+              title: ev.title,
+              genre: chCatBySid.get(String(sid)) || "Entertainment",
+              rating: "PG",
+              ep: chCatBySid.get(String(sid)) || "TV",
+              desc: `${ev.title} (${rawName})`,
+              cast: chCatBySid.get(String(sid)) || "TV",
+              stars: null,
+              isNew: false,
+              isRepeat: false,
+              isLiveData: true,
+              thisWeek: false,
+              interests: inferInterestsFromEvent(ev.title, "", chCatBySid.get(String(sid)) || "Entertainment"),
+              startMin: ev.startMin,
+              endMin: ev.endMin
+            }));
+            result[sid] = mappedTv24;
+            dayCache[sid] = { ts: Date.now(), events: mappedTv24 };
+            continue;
+          }
+
           if (tvmazeUkList === null) {
             try {
               tvmazeUkList = await fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`);
@@ -1778,6 +1983,7 @@ const ONAIR_LIVE = (() => {
     fetchPlutoTvData,
     fetchTubiLiveData,
     fetchSkySchedulesForSids,
+    fetchTimeMachineDay,
     fetchLiveStreaming,
     fetchRssFeeds,
     resolveDirectShowLink,
