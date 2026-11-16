@@ -178,6 +178,7 @@
     navTabs: document.querySelectorAll(".nav-tab"),
     viewPanels: document.querySelectorAll(".view-panel"),
     platformPills: document.getElementById("platformPills"),
+    regionSelect: document.getElementById("regionSelect"),
     epgCategoryPills: document.getElementById("epgCategoryPills"),
     dateStrip: document.getElementById("dateStrip"),
     epgScrollContainer: document.getElementById("epgScrollContainer"),
@@ -2339,6 +2340,16 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>TV Region (UK &amp; Ireland)</strong>
+            <span>Sets regional BBC One, UTV/STV/ITV1, S4C, RTÉ1, RTÉ2 &amp; TG4 schedules.</span>
+          </div>
+          <select id="settingRegionSelect" class="settings-select">
+            ${(ONAIR_LIVE.REGIONS || []).map((r) => `<option value="${r.id}" ${ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().id === r.id ? "selected" : ""}>${r.name}</option>`).join("")}
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Seasonal Spotlight &amp; Filter</strong>
             <span>Auto-updates year-round by date, or preview any season anytime.</span>
           </div>
@@ -2479,6 +2490,11 @@
       renderPlatformPills();
       showToast(`Default platform set to ${PLATFORMS.find((p) => p.id === state.platform).name}`);
     };
+
+    const settingRegionEl = document.getElementById("settingRegionSelect");
+    if (settingRegionEl) {
+      settingRegionEl.onchange = (e) => switchRegion(e.target.value);
+    }
 
     document.getElementById("settingSeasonSelect").onchange = (e) => {
       state.seasonOverride = e.target.value || "auto";
@@ -2667,6 +2683,12 @@
             `
             ).join("")}
           </div>
+          <div style="margin-top:12px;">
+            <label for="obRegionSelect" style="display:block; font-size:12px; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">TV Region (UK &amp; Ireland)</label>
+            <select id="obRegionSelect" class="settings-select" style="width:100%;">
+              ${(ONAIR_LIVE.REGIONS || []).map((r) => `<option value="${r.id}" ${ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().id === r.id ? "selected" : ""}>${r.name}</option>`).join("")}
+            </select>
+          </div>
           <div class="onboard-footer">
             <span style="font-size:12px; color:var(--text-muted);">You can change this anytime in Settings or the top bar.</span>
             <div class="onboard-footer-right">
@@ -2683,6 +2705,10 @@
             renderStep();
           };
         });
+        const obRegionEl = document.getElementById("obRegionSelect");
+        if (obRegionEl) {
+          obRegionEl.onchange = (e) => switchRegion(e.target.value);
+        }
         document.getElementById("obNextBtn").onclick = () => {
           state.platform = chosenPlatform;
           localStorage.setItem("onair_platform", chosenPlatform);
@@ -3171,9 +3197,28 @@
   // ========================================================================
   // Init
   // ========================================================================
+  function renderRegionSelect() {
+    if (!el.regionSelect || !ONAIR_LIVE.REGIONS) return;
+    const current = ONAIR_LIVE.getRegion ? ONAIR_LIVE.getRegion().id : "ni";
+    el.regionSelect.innerHTML = ONAIR_LIVE.REGIONS.map(
+      (r) => `<option value="${r.id}" ${r.id === current ? "selected" : ""}>${r.short}</option>`
+    ).join("");
+    el.regionSelect.onchange = (e) => switchRegion(e.target.value);
+  }
+
+  async function switchRegion(regionId) {
+    if (!ONAIR_LIVE.setRegion) return;
+    const reg = ONAIR_LIVE.setRegion(regionId);
+    renderRegionSelect();
+    liveEpgByDay.clear();
+    await syncLiveData(true);
+    showToast(`Region switched to ${reg.name}`);
+  }
+
   function init() {
     applyTheme();
     renderPlatformPills();
+    renderRegionSelect();
     renderCategoryPills();
     renderDateStrip();
     renderWatchlist();

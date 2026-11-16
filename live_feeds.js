@@ -168,11 +168,58 @@ const ONAIR_LIVE = (() => {
     return EG_TO_GENRE[ev.eg] || channelCategory || "Entertainment";
   }
 
+  // UK & Ireland TV Regions (Sky EPG Bouquet + Sub-Bouquet)
+  const REGIONS = [
+    { id: "ni", name: "Northern Ireland (incl. RTÉ1, RTÉ2, TG4)", short: "N. Ireland", bouquet: 4104, subBouquet: 33 },
+    { id: "ireland", name: "Ireland (RTÉ1, RTÉ2, Virgin, TG4)", short: "Ireland", bouquet: 4104, subBouquet: 50 },
+    { id: "london", name: "London", short: "London", bouquet: 4101, subBouquet: 1 },
+    { id: "scotland", name: "Scotland (BBC Scot, STV)", short: "Scotland", bouquet: 4102, subBouquet: 35 },
+    { id: "wales", name: "Wales (BBC Wales, S4C)", short: "Wales", bouquet: 4104, subBouquet: 32 },
+    { id: "nw", name: "North West", short: "North West", bouquet: 4101, subBouquet: 7 },
+    { id: "yorkshire", name: "Yorkshire", short: "Yorkshire", bouquet: 4101, subBouquet: 8 },
+    { id: "ne", name: "North East", short: "North East", bouquet: 4101, subBouquet: 12 },
+    { id: "wm", name: "West Midlands", short: "West Mids", bouquet: 4101, subBouquet: 3 },
+    { id: "em", name: "East Midlands", short: "East Mids", bouquet: 4101, subBouquet: 19 },
+    { id: "east", name: "East", short: "East", bouquet: 4101, subBouquet: 2 },
+    { id: "west", name: "West", short: "West", bouquet: 4101, subBouquet: 4 },
+    { id: "south", name: "South", short: "South", bouquet: 4101, subBouquet: 5 },
+    { id: "sw", name: "South West", short: "South West", bouquet: 4101, subBouquet: 6 },
+    { id: "se", name: "South East", short: "South East", bouquet: 4101, subBouquet: 10 }
+  ];
+
+  function getRegion() {
+    try {
+      const saved = localStorage.getItem("onair_region") || "ni";
+      return REGIONS.find((r) => r.id === saved) || REGIONS[0];
+    } catch {
+      return REGIONS[0];
+    }
+  }
+
+  function setRegion(regionId) {
+    const found = REGIONS.find((r) => r.id === regionId) || REGIONS[0];
+    try {
+      localStorage.setItem("onair_region", found.id);
+    } catch {
+      // Ignore storage errors
+    }
+    return found;
+  }
+
   // Cross-platform channel numbers mapped by lowercase channel name keywords
   const PLATFORM_NUMBERS_BY_NAME = [
     { match: /^bbc one/i, freeview: 1, virgin: 101, bt: 1, freesat: 101, color: "#b91c1c", catchup: "BBC iPlayer" },
     { match: /^bbc two/i, freeview: 2, virgin: 102, bt: 2, freesat: 102, color: "#0f766e", catchup: "BBC iPlayer" },
     { match: /^itv1/i, freeview: 3, virgin: 103, bt: 3, freesat: 103, color: "#0369a1", catchup: "ITVX" },
+    { match: /^utv\b/i, freeview: 3, virgin: 103, bt: 3, freesat: 103, color: "#0369a1", catchup: "ITVX" },
+    { match: /^stv\b/i, freeview: 3, virgin: 103, bt: 3, freesat: 103, color: "#0284c7", catchup: "STV Player" },
+    { match: /^rt[eé]\s*one/i, freeview: 51, virgin: 101, bt: null, freesat: null, color: "#15803d", catchup: "RTÉ Player" },
+    { match: /^rt[eé]\s*2|^rt[eé]2/i, freeview: 52, virgin: 102, bt: null, freesat: null, color: "#16a34a", catchup: "RTÉ Player" },
+    { match: /^tg4\b/i, freeview: 53, virgin: 104, bt: null, freesat: null, color: "#0f766e", catchup: "TG4 Player" },
+    { match: /^virgin one|^virgin media one/i, freeview: null, virgin: 103, bt: null, freesat: null, color: "#dc2626", catchup: "Virgin Media Play" },
+    { match: /^virgin two|^virgin media two/i, freeview: null, virgin: 106, bt: null, freesat: null, color: "#b91c1c", catchup: "Virgin Media Play" },
+    { match: /^virgin three|^virgin media three/i, freeview: null, virgin: 107, bt: null, freesat: null, color: "#991b1b", catchup: "Virgin Media Play" },
+    { match: /^virgin four|^virgin media four/i, freeview: null, virgin: 108, bt: null, freesat: null, color: "#7f1d1d", catchup: "Virgin Media Play" },
     { match: /^channel 4/i, freeview: 4, virgin: 104, bt: 4, freesat: 104, color: "#1d4ed8", catchup: "Channel 4" },
     { match: /^5\s*hd$|^channel 5/i, freeview: 5, virgin: 105, bt: 5, freesat: 105, color: "#4338ca", catchup: "My5" },
     { match: /^itv2/i, freeview: 6, virgin: 115, bt: 6, freesat: 113, color: "#0284c7", catchup: "ITVX" },
@@ -449,15 +496,18 @@ const ONAIR_LIVE = (() => {
     return [...new Set(list)];
   }
 
-  // 1. Fetch Live Full UK Channel Lineup from Sky EPG API (with multi-tier backup)
-  async function fetchLiveChannels(force = false) {
+  // 1. Fetch Live Full UK & Ireland Channel Lineup from Sky EPG API (with multi-tier backup)
+  async function fetchLiveChannels(force = false, regionId = null) {
+    const region = regionId ? (REGIONS.find((r) => r.id === regionId) || getRegion()) : getRegion();
     const cache = loadCache();
-    if (!force && cache.channels && cache.channels.ver === 4 && Date.now() - cache.channels.ts < CHANNELS_TTL_MS) {
-      return cache.channels.list;
+    const byRegion = cache.channelsByRegion || {};
+    const cachedReg = byRegion[region.id];
+    if (!force && cachedReg && cachedReg.ver === 5 && Date.now() - cachedReg.ts < CHANNELS_TTL_MS) {
+      return cachedReg.list;
     }
 
     try {
-      const data = await fetchJson("https://awk.epgsky.com/hawk/linear/services/4101/1");
+      const data = await fetchJson(`https://awk.epgsky.com/hawk/linear/services/${region.bouquet}/${region.subBouquet}`);
       const services = (data.services || []).filter((s) => !s.adult && Number(s.c) < 800);
 
       const channels = services.map((s) => {
@@ -503,7 +553,11 @@ const ONAIR_LIVE = (() => {
       });
 
       if (channels.length > 0) {
-        cache.channels = { ts: Date.now(), ver: 4, list: channels };
+        cache.channelsByRegion = {
+          ...(cache.channelsByRegion || {}),
+          [region.id]: { ts: Date.now(), ver: 5, list: channels }
+        };
+        cache.channels = { ts: Date.now(), ver: 5, list: channels };
         saveCache(cache);
         return channels;
       }
@@ -511,7 +565,10 @@ const ONAIR_LIVE = (() => {
       // Fall through to backups
     }
 
-    // Backup #1: stale localStorage channels
+    // Backup #1: stale localStorage channels for region or default
+    if (cachedReg && Array.isArray(cachedReg.list) && cachedReg.list.length > 0) {
+      return cachedReg.list;
+    }
     if (cache.channels && Array.isArray(cache.channels.list) && cache.channels.list.length > 0) {
       return cache.channels.list;
     }
@@ -1714,6 +1771,9 @@ const ONAIR_LIVE = (() => {
   }
 
   return {
+    REGIONS,
+    getRegion,
+    setRegion,
     fetchLiveChannels,
     fetchPlutoTvData,
     fetchTubiLiveData,

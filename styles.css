@@ -585,6 +585,23 @@ select {
   border-bottom: none;
 }
 
+.region-select {
+  appearance: none;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 190px;
+}
+
+.region-select:hover {
+  border-color: var(--accent);
+}
+
 .epg-channel-cell {
   position: sticky;
   left: 0;
@@ -599,7 +616,24 @@ select {
   gap: 8px;
 }
 
-.epg-row:hover .epg-channel-cell {
+.epg-row:hover .region-select {
+  appearance: none;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 190px;
+}
+
+.region-select:hover {
+  border-color: var(--accent);
+}
+
+.epg-channel-cell {
   background: var(--bg-hover);
 }
 
@@ -1905,7 +1939,24 @@ select {
     display: none;
   }
 
-  .epg-channel-cell {
+  .region-select {
+  appearance: none;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 190px;
+}
+
+.region-select:hover {
+  border-color: var(--accent);
+}
+
+.epg-channel-cell {
     padding: 6px 8px;
     gap: 6px;
   }
