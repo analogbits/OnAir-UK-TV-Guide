@@ -820,8 +820,6 @@ const ONAIR_LIVE = (() => {
       logDebug("TimeMachine", `Session cache hit for ${isoDate} (${region.short})`, "info");
       return timeMachineMemCache.get(memKey);
     }
-    logDebug("TimeMachine", `Fetching ${isoDate} (${region.short}) — BBC1=${bbc1 ? bbc1.name : "none"}, BBC rest=${bbcRest.map((c) => c.name).join(", ") || "none"}`, "info");
-
     // Polite multi-pass cap: BBC One immediately, then stagger remaining terrestrial BBC channels (4s, 9s)
     // plus a single retry at 7s if BBC One missed on initial load (zero 429 bursts)
     const bbcChs = (channelsList || [])
@@ -829,6 +827,7 @@ const ONAIR_LIVE = (() => {
       .slice(0, 3);
     const bbc1 = bbcChs.find((c) => /^bbc one\b/i.test(c.name || "")) || bbcChs[0] || null;
     const bbcRest = bbcChs.filter((c) => c !== bbc1);
+    logDebug("TimeMachine", `Fetching ${isoDate} (${region.short}) — BBC1=${bbc1 ? bbc1.name : "none"}, BBC rest=${bbcRest.map((c) => c.name).join(", ") || "none"}`, "info");
 
     const isLocalProxy =
       typeof location !== "undefined" &&
