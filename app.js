@@ -842,6 +842,8 @@
     el.viewPanels.forEach((panel) => {
       panel.classList.toggle("is-active", panel.id === `view-${viewName}`);
     });
+    document.documentElement.scrollLeft = 0;
+    document.body.scrollLeft = 0;
     if (viewName === "epg") {
       renderEPG();
     } else if (viewName === "now-next") {
@@ -3870,9 +3872,9 @@
             <strong>Custom CORS Relay URL (GitHub Pages)</strong>
             <span>Optional private Cloudflare Worker prefix (e.g. <code>https://your-worker.workers.dev/?url=</code>) to bypass public 429 limits for BBC Genome, tv24, Pluto &amp; Tubi.</span>
           </div>
-          <div style="display:flex; gap:6px; align-items:center;">
-            <input id="settingCustomProxyInput" type="url" class="settings-select" style="min-width:240px;" placeholder="https://your-worker.workers.dev/?url=" value="${escapeHtml(localStorage.getItem("onair_custom_proxy") || "")}" />
-            <button id="settingSaveProxyBtn" class="btn-secondary" type="button" style="padding:6px 12px;">Save</button>
+          <div style="display:flex; gap:6px; align-items:center; width:100%; max-width:420px; flex-wrap:wrap;">
+            <input id="settingCustomProxyInput" type="url" class="settings-select" style="flex:1; min-width:0; width:100%;" placeholder="https://your-worker.workers.dev/?url=" value="${escapeHtml(localStorage.getItem("onair_custom_proxy") || "")}" />
+            <button id="settingSaveProxyBtn" class="btn-secondary" type="button" style="padding:6px 12px; flex-shrink:0;">Save</button>
           </div>
         </div>
 
@@ -4032,7 +4034,9 @@
       densityEl.onchange = (e) => {
         state.epgDensity = e.target.value || "comfortable";
         localStorage.setItem("onair_epg_density", state.epgDensity);
-        renderEPG(false);
+        if (el.epgGrid) el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
+        if (state.view === "epg") renderEPG(false);
+        window.scrollTo({ left: 0, behavior: "instant" });
         showToast(`EPG row density set to ${state.epgDensity === "compact" ? "Compact" : "Comfortable"}`);
       };
     }
@@ -4043,7 +4047,8 @@
         state.epgZoom = Number(e.target.value || 4);
         PIXELS_PER_MIN = state.epgZoom;
         localStorage.setItem("onair_epg_zoom", String(state.epgZoom));
-        renderEPG(false);
+        if (state.view === "epg") renderEPG(false);
+        window.scrollTo({ left: 0, behavior: "instant" });
         showToast("EPG timeline zoom updated");
       };
     }
@@ -4053,8 +4058,9 @@
       hideTeleEl.onchange = (e) => {
         state.hideTeleshopping = Boolean(e.target.checked);
         localStorage.setItem("onair_hide_teleshopping", state.hideTeleshopping ? "1" : "0");
-        renderEPG(false);
+        if (state.view === "epg") renderEPG(false);
         renderSettings();
+        window.scrollTo({ left: 0, behavior: "instant" });
         showToast(state.hideTeleshopping ? "Overnight Teleshopping blocks hidden" : "Teleshopping blocks shown");
       };
     }
@@ -5441,6 +5447,14 @@
       uiDebug("error", "App Links", `Invalid platform URLs in WATCH_PLATFORMS: ${brokenPlatforms.join(", ")}`, ms);
     } else if (verbose) {
       uiDebug("ok", "App Links", `All ${Object.keys(WATCH_PLATFORMS || {}).length} UK streaming & catch-up app targets valid`, ms);
+    }
+
+    const docW = document.documentElement.clientWidth || window.innerWidth;
+    const scrollW = document.documentElement.scrollWidth || docW;
+    if (scrollW > docW + 2) {
+      uiDebug("warn", "Viewport", `Horizontal overflow detected: scrollWidth=${scrollW}px > clientWidth=${docW}px`, ms);
+    } else if (verbose) {
+      uiDebug("ok", "Viewport", `Viewport locked cleanly at ${docW}px (zero horizontal overflow)`, ms);
     }
 
     return { missingDom, brokenPlatforms };
