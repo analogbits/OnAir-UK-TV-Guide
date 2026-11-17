@@ -166,6 +166,11 @@
               <select id="regionSelect" class="region-select" aria-label="Select UK or Ireland Region"></select>
             </div>
 
+            <div class="control-group">
+              <label class="control-label" for="epgChannelFilterInput">Channel Filter</label>
+              <input id="epgChannelFilterInput" class="region-select" type="search" placeholder="Name or Ch #..." aria-label="Filter channels by name or number" style="min-width:135px;" />
+            </div>
+
             <div class="control-group category-group">
               <label class="control-label">On Now</label>
               <div class="filter-pills" id="epgCategoryPills" role="group" aria-label="Filter by what is on now"></div>
@@ -189,6 +194,7 @@
               <button class="jump-btn jump-now" data-jump="now" type="button">
                 <span class="live-dot"></span> Now
               </button>
+              <button class="jump-btn" data-jump="0" type="button" title="Jump to 00:00 Midnight">Overnight</button>
               <button class="jump-btn" data-jump="9" type="button">Morning</button>
               <button class="jump-btn" data-jump="14" type="button">Afternoon</button>
               <button class="jump-btn" data-jump="20" type="button">Primetime</button>
@@ -465,7 +471,7 @@
   <script src="fast_epg_snapshot.js?v=20261116z"></script>
   <script src="vault_data.js?v=20261116z"></script>
   <script src="past_epg_data.js?v=20261116z"></script>
-  <script src="live_feeds.js?v=20261116zt"></script>
-  <script src="app.js?v=20261116zt"></script>
+  <script src="live_feeds.js?v=20261116zu"></script>
+  <script src="app.js?v=20261116zu"></script>
 </body>
 </html>

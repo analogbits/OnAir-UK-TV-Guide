@@ -88,7 +88,11 @@ Then open `http://127.0.0.1:8765` in your browser. `server.py` serves static fil
 
 ## Changelog
 
-### 2026-11-17 — 24h Guide, Pluto/Tubi Fixes, Compression & Guide Mode
+### 2026-11-17 — 24h Guide, Pluto/Tubi Fixes, Compression, QoL & Guide Mode
+- **QoL & Full Persistence Audit** — Added EPG **Channel Filter** (`Name or Ch #`), **Overnight (`00:00`)** timeline jump button, Search **`🎬 Films`** filter tab, inline **`+ Watchlist` / `🔔 Remind`** actions on Search TV cards, multi-day modal lookup (`findProgrammeById`), keyboard shortcuts (`/` for Search, `N` for Now), IndexedDB cache wiring for Search, and migration of legacy `rt_*` keys (`watchlist`, `favorites`, `platform`, `reminders`) to `onair_*`.
+- `a62edac` — Extended Time Machine minimum year back to **1989** (`1989 – Next Year`).
+- `e229bb9` — Hid the seasonal category pill in `Normal Viewing` and updated it dynamically per active season.
+- `3432d1b` — Updated `README.md` with full user guide, architecture details, and complete version changelog.
 - `f56e295` — Fixed Pluto TV & Tubi genre classification (`classifyFastGenre`) so TV series (*Charmed*, *The Walking Dead*, *JAG*, *Farscape*, *Andromeda*, *Z Nation*, *Six Million Dollar Man*, etc.) are classified as `Drama`/`Entertainment` instead of `Film`, and bumped `pluto_v2_` / `tubi_v2_` caches.
 - `1fcd9e2` — Added **Pluto TV** and **Tubi** to Streaming platform filters and merged live Pluto/Tubi titles into **Streaming** and **What to Watch**.
 - `88da9e5` — Fixed Pluto TV & Tubi `sid` mismatch (`pluto-`/`tubi-` prefix) that caused `"Fetching live schedule..."` to hang, and started Pluto queries at `00:00`.

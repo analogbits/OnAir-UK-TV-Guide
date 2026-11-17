@@ -513,6 +513,9 @@ const ONAIR_LIVE = (() => {
           }
         }
       }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("onair:idb-hydrated"));
+      }
     } catch {
       // ignore hydration errors
     }
@@ -2866,6 +2869,7 @@ const ONAIR_LIVE = (() => {
     fetchLiveStreaming,
     fetchRssFeeds,
     resolveDirectShowLink,
+    getCachedStore: loadCache,
     getVaultStats,
     getStorageReport,
     getFeedHealth,

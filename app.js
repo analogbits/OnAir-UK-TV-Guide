@@ -9,11 +9,30 @@
   const END_HOUR = 24; // 24:00
   const PIXELS_PER_MIN = 4; // 240px per hour
 
+  // Migrate any legacy rt_* localStorage keys once so saved items are never lost
+  [
+    ["rt_platform", "onair_platform"],
+    ["rt_watchlist", "onair_watchlist"],
+    ["rt_favorites", "onair_favorites"],
+    ["rt_reminders", "onair_reminders"]
+  ].forEach(([oldKey, newKey]) => {
+    try {
+      const oldVal = localStorage.getItem(oldKey);
+      if (oldVal && !localStorage.getItem(newKey)) {
+        localStorage.setItem(newKey, oldVal);
+      }
+      if (oldVal !== null) localStorage.removeItem(oldKey);
+    } catch {
+      // ignore
+    }
+  });
+
   // Persistent State
   const state = {
     view: "epg",
     platform: localStorage.getItem("onair_platform") || "sky",
     epgCategory: "All",
+    epgChannelQuery: "",
     dayOffset: 0,
     nowNextCategory: "All",
     wtwWeekFilter: "All",
@@ -756,6 +775,13 @@
       ensureSchedulesForChannels(toFetch, state.dayOffset);
     }
     let channels = filterChannelsByCurrentProgramme(platformChannels, state.epgCategory, state.dayOffset, nowMin);
+    if (state.epgChannelQuery) {
+      const cq = state.epgChannelQuery.toLowerCase().trim();
+      channels = channels.filter((c) => {
+        const num = c.numbers && c.numbers[state.platform] != null ? String(c.numbers[state.platform]).toLowerCase() : "";
+        return (c.name && c.name.toLowerCase().includes(cq)) || (c.short && c.short.toLowerCase().includes(cq)) || num.includes(cq);
+      });
+    }
     if (state.timeMachineDate && timeMachineEpg) {
       channels = [...channels].sort((a, b) => {
         const aHas = (timeMachineEpg[a.sid] || []).length > 0 ? 1 : 0;
@@ -1686,6 +1712,9 @@
 
   function getCachedStoreForSearch() {
     try {
+      if (typeof ONAIR_LIVE !== "undefined" && ONAIR_LIVE.getCachedStore) {
+        return ONAIR_LIVE.getCachedStore() || {};
+      }
       return JSON.parse(localStorage.getItem("onair_live_epg_v7") || "{}");
     } catch {
       return {};
@@ -1694,20 +1723,23 @@
 
   function getDayScheduleForSearch(ch, dayOffset, localCache) {
     const liveDay = liveEpgByDay.get(dayOffset);
-    if (liveDay && Array.isArray(liveDay[ch.sid]) && liveDay[ch.sid].length) {
-      return liveDay[ch.sid];
+    if (liveDay) {
+      const liveEvs = liveDay[ch.sid] || liveDay[ch.id];
+      if (Array.isArray(liveEvs) && liveEvs.length) return liveEvs;
     }
     const dateStr = getSkyDateStrForOffset(dayOffset);
     const epgDay = localCache && localCache[`epg_${dateStr}`];
     if (epgDay && epgDay[ch.sid] && Array.isArray(epgDay[ch.sid].events) && epgDay[ch.sid].events.length) {
       return epgDay[ch.sid].events;
     }
-    if (ch.plutoSlug && localCache && localCache[`pluto_${dateStr}`] && localCache[`pluto_${dateStr}`].schedules) {
-      const ps = localCache[`pluto_${dateStr}`].schedules[ch.id];
+    const plutoBucket = localCache && (localCache[`pluto_v2_${dateStr}`] || localCache[`pluto_${dateStr}`]);
+    if (ch.plutoSlug && plutoBucket && plutoBucket.schedules) {
+      const ps = plutoBucket.schedules[ch.id] || plutoBucket.schedules[ch.sid];
       if (Array.isArray(ps) && ps.length) return ps;
     }
-    if (ch.tubiId && localCache && localCache[`tubi_${dateStr}`] && localCache[`tubi_${dateStr}`].schedules) {
-      const ts = localCache[`tubi_${dateStr}`].schedules[ch.id];
+    const tubiBucket = localCache && (localCache[`tubi_v2_${dateStr}`] || localCache[`tubi_${dateStr}`]);
+    if (ch.tubiId && tubiBucket && tubiBucket.schedules) {
+      const ts = tubiBucket.schedules[ch.id] || tubiBucket.schedules[ch.sid];
       if (Array.isArray(ts) && ts.length) return ts;
     }
     if (dayOffset < 0 && typeof window !== "undefined" && window.ONAIR_PAST_EPG && window.ONAIR_PAST_EPG[dateStr]) {
@@ -1988,12 +2020,15 @@
     };
     const newTvMatches = tvMatches.filter(isNewTvMatch);
     const newStreamMatches = streamMatches.filter(isNewStreamMatch);
+    const filmTvMatches = tvMatches.filter(({ prog }) => prog && (prog.genre === "Film" || /^film:/i.test(prog.title || "")));
+    const filmStreamMatches = streamMatches.filter((item) => item && item.type === "Films");
 
     const filterBar = document.getElementById("searchFilterBar");
     if (filterBar) {
       const tabs = [
         { id: "all", label: `All (${tvMatches.length + streamMatches.length})` },
         { id: "new", label: `✨ New Shows (${newTvMatches.length + newStreamMatches.length})` },
+        { id: "films", label: `🎬 Films (${filmTvMatches.length + filmStreamMatches.length})` },
         { id: "next", label: `Live & On Next (${liveAndUpcoming.length})` },
         { id: "past", label: `Past 7 Days (${pastMatches.length})` },
         { id: "stream", label: `Streaming (${streamMatches.length})` }
@@ -2074,6 +2109,9 @@
     if (state.searchFilter === "new") {
       visibleTv = newTvMatches;
       visibleStream = newStreamMatches;
+    } else if (state.searchFilter === "films") {
+      visibleTv = filmTvMatches;
+      visibleStream = filmStreamMatches;
     } else if (state.searchFilter === "next") {
       visibleTv = liveAndUpcoming;
       visibleStream = [];
@@ -2084,12 +2122,28 @@
       visibleTv = [];
     }
 
+    const bindTimeMachineJumpButtons = () => {
+      el.searchResultsGrid.querySelectorAll("[data-tm-jump-iso]").forEach((btn) => {
+        if (btn.dataset.tmBound) return;
+        btn.dataset.tmBound = "1";
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const iso = btn.dataset.tmJumpIso;
+          closeSearch();
+          switchView("epg");
+          loadTimeMachineDate(iso);
+        });
+      });
+    };
+
     const tvHtml = visibleTv
-      .slice(0, 60)
+      .slice(0, 120)
       .map(({ prog, channel, dayOffset, status, whenLabel }) => {
         const chNum = channel.numbers[state.platform];
         const platLabel = chNum != null ? `${channel.name} (${chNum})` : channel.name;
         const bStatus = getBroadcastStatus(prog);
+        const savedWl = isInWatchlist(prog.id);
+        const reminded = state.reminders.has(prog.id);
         return `
         <article class="stream-card" data-prog-id="${prog.id}" data-channel-id="${channel.id}">
           <div class="stream-card-banner" style="background:${channel.color}"></div>
@@ -2102,8 +2156,12 @@
             <div class="stream-card-meta">${prog.ep || ""} &bull; ${prog.genre}${bStatus ? ` &bull; <strong>${bStatus}</strong>` : ""}</div>
             <p class="stream-card-desc">${prog.desc || ""}</p>
             <div class="stream-card-footer">
-              <button class="chip-pill" type="button" data-jump-ch="${channel.id}" data-jump-day="${dayOffset}" data-jump-min="${prog.startMin}" onclick="event.stopPropagation();">Jump to Guide</button>
-              <span style="font-size:12px; font-weight:600; color:var(--brand-red);">View Details &rarr;</span>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button class="chip-pill" type="button" data-jump-ch="${channel.id}" data-jump-day="${dayOffset}" data-jump-min="${prog.startMin}" onclick="event.stopPropagation();">Jump to Guide</button>
+                <button class="pill-btn ${savedWl ? "is-active" : ""}" type="button" data-search-wl-prog="${prog.id}" data-search-wl-ch="${channel.id}" onclick="event.stopPropagation();">${savedWl ? "✓ Saved" : "+ Watchlist"}</button>
+                ${status === "upcoming" ? `<button class="pill-btn ${reminded ? "is-active" : ""}" type="button" data-search-rem-prog="${prog.id}" data-search-rem-ch="${channel.id}" data-search-rem-day="${dayOffset}" onclick="event.stopPropagation();">${reminded ? "🔔 Set" : "🔔 Remind"}</button>` : ""}
+              </div>
+              <span style="font-size:12px; font-weight:600; color:var(--brand-red);">Details &rarr;</span>
             </div>
           </div>
         </article>
@@ -2115,25 +2173,31 @@
     el.searchResultsGrid.innerHTML =
       tvHtml + streamHtml ||
       `<div class="empty-state" style="grid-column:1/-1;">Searching UK show database for "${query}"...</div>`;
+    bindTimeMachineJumpButtons();
 
-    if (!tvHtml && !streamHtml && q.length >= 2) {
+    if (q.length >= 2 && (!tvHtml && !streamHtml || state.searchFilter === "all" || state.searchFilter === "new" || state.searchFilter === "next")) {
       fetchLiveShowDirectoryMatches(query).then((dirItems) => {
         if (state.searchQuery !== q) return;
-        if (!dirItems.length) {
-          el.searchResultsGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No programmes or streaming titles matched "${query}". Try "Sync Upcoming Days" above or switch filter.</div>`;
-          return;
+        const filteredDir = state.searchFilter === "new"
+          ? dirItems.filter(isNewStreamMatch)
+          : state.searchFilter === "next"
+            ? dirItems.filter((d) => d.nextEpisode && d.nextEpisode.airdate)
+            : dirItems;
+        if (!tvHtml && !streamHtml) {
+          if (!filteredDir.length) {
+            el.searchResultsGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No programmes or streaming titles matched "${query}". Try "Sync Upcoming Days" above or switch filter.</div>`;
+            return;
+          }
+          el.searchSummary.textContent = `Not on live UK TV (-7d..+6d), but found ${filteredDir.length} show match(es) for "${query}"`;
+          el.searchResultsGrid.innerHTML = filteredDir.map(renderStreamCard).join("");
+          bindTimeMachineJumpButtons();
+        } else {
+          const upcomingOnly = filteredDir.filter((d) => d.nextEpisode && d.nextEpisode.airdate);
+          if (upcomingOnly.length) {
+            el.searchResultsGrid.insertAdjacentHTML("afterbegin", upcomingOnly.map(renderStreamCard).join(""));
+            bindTimeMachineJumpButtons();
+          }
         }
-        el.searchSummary.textContent = `Not on live UK TV (-7d..+6d), but found ${dirItems.length} show match(es) for "${query}"`;
-        el.searchResultsGrid.innerHTML = dirItems.map(renderStreamCard).join("");
-        el.searchResultsGrid.querySelectorAll("[data-tm-jump-iso]").forEach((btn) => {
-          btn.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            const iso = btn.dataset.tmJumpIso;
-            closeSearch();
-            switchView("epg");
-            loadTimeMachineDate(iso);
-          });
-        });
       });
     }
 
@@ -2353,10 +2417,28 @@
   // ========================================================================
   // Detail Modal
   // ========================================================================
+  function findProgrammeById(progId, channelId) {
+    const ch = liveChannels.find((c) => c.id === channelId);
+    if (!ch) return null;
+    const currentProgs = getSchedule(channelId, state.dayOffset);
+    if (currentProgs) {
+      const hit = currentProgs.find((p) => p.id === progId);
+      if (hit) return hit;
+    }
+    const localCache = getCachedStoreForSearch();
+    for (let d = -7; d <= 6; d++) {
+      const dayProgs = getDayScheduleForSearch(ch, d, localCache);
+      if (Array.isArray(dayProgs)) {
+        const hit = dayProgs.find((p) => p.id === progId);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
   function openProgrammeModal(progId, channelId) {
     const ch = liveChannels.find((c) => c.id === channelId);
-    const progs = getSchedule(channelId, state.dayOffset);
-    const prog = progs ? progs.find((p) => p.id === progId) : null;
+    const prog = findProgrammeById(progId, channelId);
     if (!ch || !prog) return;
 
     const saved = isInWatchlist(prog.id);
@@ -2552,7 +2634,7 @@
       state.watchlist.unshift(entry);
       showToast(`Added "${entry.title}" to Watchlist`);
     }
-    localStorage.setItem("rt_watchlist", JSON.stringify(state.watchlist));
+    localStorage.setItem("onair_watchlist", JSON.stringify(state.watchlist));
     renderWatchlist();
     if (state.view === "streaming") renderStreaming();
   }
@@ -2600,7 +2682,7 @@
       const platBtn = e.target.closest("[data-platform]");
       if (platBtn) {
         state.platform = platBtn.dataset.platform;
-        localStorage.setItem("rt_platform", state.platform);
+        localStorage.setItem("onair_platform", state.platform);
         renderPlatformPills();
         if (state.view === "epg") renderEPG();
         if (state.view === "now-next") renderNowNext();
@@ -2689,8 +2771,60 @@
           state.favorites.add(cid);
           showToast("Added to Favorite Channels");
         }
-        localStorage.setItem("rt_favorites", JSON.stringify([...state.favorites]));
+        localStorage.setItem("onair_favorites", JSON.stringify([...state.favorites]));
         renderEPG();
+        return;
+      }
+
+      const searchWlProgBtn = e.target.closest("[data-search-wl-prog]");
+      if (searchWlProgBtn) {
+        e.stopPropagation();
+        const pid = searchWlProgBtn.dataset.searchWlProg;
+        const cid = searchWlProgBtn.dataset.searchWlCh;
+        const ch = liveChannels.find((c) => c.id === cid);
+        const found = findProgrammeById(pid, cid);
+        if (found && ch) {
+          toggleWatchlist({
+            id: found.id,
+            kind: "tv",
+            channelId: ch.id,
+            title: found.title,
+            subtitle: `${ch.name} • ${formatTime(found.startMin)}`
+          });
+          if (state.searchQuery) runSearch(state.searchQuery);
+        }
+        return;
+      }
+
+      const searchRemProgBtn = e.target.closest("[data-search-rem-prog]");
+      if (searchRemProgBtn) {
+        e.stopPropagation();
+        const pid = searchRemProgBtn.dataset.searchRemProg;
+        const cid = searchRemProgBtn.dataset.searchRemCh;
+        const dOff = Number(searchRemProgBtn.dataset.searchRemDay || 0);
+        const ch = liveChannels.find((c) => c.id === cid);
+        const found = findProgrammeById(pid, cid);
+        if (found && ch) {
+          if (state.reminders.has(pid)) {
+            state.reminders.delete(pid);
+            state.reminderItems = state.reminderItems.filter((r) => r.id !== pid);
+            showToast(`Reminder removed for "${found.title}"`);
+          } else {
+            state.reminders.add(pid);
+            const iso = getSkyDateStrForOffset(dOff).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+            state.reminderItems = [
+              ...state.reminderItems.filter((r) => r.id !== pid),
+              { id: pid, title: found.title, channelName: ch.name, startMin: found.startMin, endMin: found.endMin, isoDate: iso, notified: false }
+            ];
+            if (typeof Notification !== "undefined" && Notification.permission === "default") {
+              Notification.requestPermission().catch(() => {});
+            }
+            showToast(`🔔 Reminder set for "${found.title}" (${formatTime(found.startMin)})`);
+          }
+          localStorage.setItem("onair_reminders", JSON.stringify([...state.reminders]));
+          localStorage.setItem("onair_reminder_items", JSON.stringify(state.reminderItems));
+          if (state.searchQuery) runSearch(state.searchQuery);
+        }
         return;
       }
 
@@ -2799,6 +2933,26 @@
         el.detailModal.classList.add("hidden");
         el.watchlistDrawer.classList.add("hidden");
       }
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable)) return;
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        el.globalSearch.focus();
+      } else if ((e.key === "n" || e.key === "N") && !e.metaKey && !e.ctrlKey && state.view === "epg") {
+        scrollEpgToHour("now");
+      }
+    });
+
+    const chFilterInput = document.getElementById("epgChannelFilterInput");
+    if (chFilterInput) {
+      chFilterInput.addEventListener("input", (e) => {
+        state.epgChannelQuery = e.target.value || "";
+        renderEPG(false);
+      });
+    }
+
+    window.addEventListener("onair:idb-hydrated", () => {
+      if (state.view === "settings") renderSettings();
     });
 
     // Theme Toggle (cycles: System -> Light -> Dark)
