@@ -2390,16 +2390,47 @@ const ONAIR_LIVE = (() => {
     }
   }
 
-  function mapPlutoCategory(plutoCat, name) {
-    const t = `${plutoCat || ""} ${name || ""}`.toLowerCase();
-    if (/movie|film|cinema|western|thriller|sci-fi|horror|christmas/i.test(t)) return "Film";
-    if (/kid|cartoon|nick|anime|teen/i.test(t)) return "Kids";
-    if (/news|weather/i.test(t)) return "News";
-    if (/sport|poker|wrestling|mma|motorsport|nfl|golf/i.test(t)) return "Sport";
-    if (/doc|history|science|nature|mythbuster|crime|mystery/i.test(t)) return "Documentary";
-    if (/music|mtv|vevo|concert/i.test(t)) return "Music";
-    if (/drama|soap|classic tv/i.test(t)) return "Drama";
+  function classifyFastGenre({ rawGenre = "", channelCat = "", channelName = "", title = "", desc = "", season = null, episode = null, durMin = 0, seriesType = "" } = {}) {
+    const chTxt = `${channelCat} ${channelName}`.toLowerCase();
+    const itemTxt = `${rawGenre} ${title} ${desc}`.toLowerCase();
+    const combined = `${chTxt} ${itemTxt}`;
+
+    // 1. News, Sport, Kids, Music, Documentary take priority
+    if (/\b(news|weather|breaking|cbs news|euronews|bloomberg|cnn)\b/i.test(combined)) return "News";
+    if (/\b(sport|poker|wrestling|wwe|aew|mma|ufc|boxing|motorsport|rally|nfl|football|soccer|uefa|fifa|golf|pga|snooker|darts|rugby|tennis)\b/i.test(combined)) return "Sport";
+    if (/\b(kid|kids|children|cartoon|nick|anime|teletubbies|smurfs|pokemon|pokémon|arthur|turtles|toon)\b/i.test(combined)) return "Kids";
+    if (/\b(music|mtv|vevo|concert|that's (rock|60s|70s|80s|90s|christmas))\b/i.test(chTxt) || /\b(music video|concert|mtv)\b/i.test(rawGenre)) return "Music";
+    if (/\b(doc|documentary|documentaries|history|science|nature|wildlife|true crime|forensic|unsolved|haunting|paranormal|ghost|air disaster|exploring|modern marvels|mythbusters|first 48|fbi files|medical detectives|deadly women|crimes that shook)\b/i.test(combined)) return "Documentary";
+
+    // 2. Detect TV series / episodes so series never get mislabeled as Film
+    const hasEpisodeMeta = Boolean(
+      season ||
+      episode ||
+      seriesType === "tv" ||
+      /\b(s\d+\s*e\d+|series\s+\d+|season\s+\d+|ep\.?\s*\d+)\b/i.test(`${title} ${desc}`)
+    );
+    const isSeriesChannel = /\b(series|tv|sitcom|classic tv|charmed|walking dead|jag|farscape|andromeda|earth: final|relic hunter|six million|bionic woman|incredible hulk|xena|hercules|south park|sabrina|csi|flashpoint|cagney|rookie blue|ironside|hawaii|macgyver|dynasty|sherlock|mission impossible|z nation|land of the lost|young riders|lone ranger|annie oakley|invisible man|mr\.?\s*bean|anger management|kids in the hall)\b/i.test(channelName || "");
+
+    // 3. Film only when genuinely a movie (not an episode, not a TV series channel)
+    const isExplicitFilmChannel = /\b(movies?|films?|cinema|moviesphere|curzon|screen classics|lifetime movies)\b/i.test(channelName || "");
+    const isGenreFilmChannel = /\bpluto tv (sci-fi|horror|thrillers|westerns|action|christmas|mistletoe)\b/i.test(channelName || "");
+    if (!hasEpisodeMeta && !isSeriesChannel) {
+      if (seriesType === "film" || isExplicitFilmChannel) return "Film";
+      if ((isGenreFilmChannel || /\b(movie|film|feature)\b/i.test(rawGenre)) && (durMin >= 68 || durMin === 0)) return "Film";
+    }
+
+    // 4. Entertainment (reality, game shows, food, home, comedy) vs Drama
+    if (/\b(comedy|sitcom|funny|reality|game show|judge|tipping point|pointless|wipeout|chef|kitchen|homes|antiques|hoarders|cops|auction|pawn|graham norton|whose line|geordie|catfish|teen mom|dr\.?\s*phil|housewives|hardcore pawn)\b/i.test(combined)) {
+      return "Entertainment";
+    }
+    if (/\b(drama|sci-fi|science fiction|fantasy|horror|thriller|action|western|crime|mystery|adventure|supernatural|soap)\b/i.test(combined)) {
+      return "Drama";
+    }
     return "Entertainment";
+  }
+
+  function mapPlutoCategory(plutoCat, name) {
+    return classifyFastGenre({ rawGenre: plutoCat, channelName: name });
   }
 
   function buildProxyUrls(targetUrl, includeDirect = true) {
@@ -2455,7 +2486,7 @@ const ONAIR_LIVE = (() => {
   async function fetchPlutoTvData(dayOffset = 0, force = false) {
     const dateStr = getSkyDateString(dayOffset);
     const cache = loadCache();
-    const cached = cache[`pluto_${dateStr}`];
+    const cached = cache[`pluto_v2_${dateStr}`];
     if (!force && cached && cached.ts && Date.now() - cached.ts < getEffectiveCacheTtlMs() && Array.isArray(cached.channels) && cached.channels.length) {
       feedHealth.pluto = { status: "cached", ts: cached.ts, note: `Cached (${cached.channels.length} ch)` };
       return { channels: cached.channels, schedules: cached.schedules || {} };
@@ -2564,7 +2595,19 @@ const ONAIR_LIVE = (() => {
           if (clampedEnd <= clampedStart) return null;
 
           const epObj = tl.episode || {};
-          const genre = mapPlutoCategory(epObj.genre || ch.category, tl.title);
+          const durMin = Math.round((enMs - stMs) / 60000);
+          const seriesType = epObj.series && epObj.series.type ? String(epObj.series.type).toLowerCase() : "";
+          const genre = classifyFastGenre({
+            rawGenre: epObj.genre || epObj.subGenre || "",
+            channelCat: ch.category || "",
+            channelName: ch.name || "",
+            title: tl.title || "",
+            desc: epObj.description || "",
+            season: epObj.season,
+            episode: epObj.number,
+            durMin,
+            seriesType
+          });
           const actors = epObj.clip && Array.isArray(epObj.clip.actors) && epObj.clip.actors.length
             ? epObj.clip.actors.slice(0, 4).join(", ")
             : genre;
@@ -2591,7 +2634,7 @@ const ONAIR_LIVE = (() => {
       schedules[chId] = events;
     });
 
-    cache[`pluto_${dateStr}`] = { ts: Date.now(), channels, schedules };
+    cache[`pluto_v2_${dateStr}`] = { ts: Date.now(), channels, schedules };
     saveCache(cache);
     feedHealth.pluto = { status: "live", ts: Date.now(), note: `Live (${channels.length} ch)` };
     return { channels, schedules };
@@ -2600,7 +2643,7 @@ const ONAIR_LIVE = (() => {
   async function fetchTubiLiveData(dayOffset = 0, force = false) {
     const dateStr = getSkyDateString(dayOffset);
     const cache = loadCache();
-    const cached = cache[`tubi_${dateStr}`];
+    const cached = cache[`tubi_v2_${dateStr}`];
     if (!force && cached && cached.ts && Date.now() - cached.ts < getEffectiveCacheTtlMs() && Array.isArray(cached.channels)) {
       feedHealth.tubi = { status: "cached", ts: cached.ts, note: `Cached (${cached.channels.length} ch)` };
       return { channels: cached.channels, schedules: cached.schedules || {} };
@@ -2760,22 +2803,34 @@ const ONAIR_LIVE = (() => {
           const clampedEnd = Math.min(24 * 60, endMin);
           if (clampedEnd <= clampedStart) return null;
 
+          const durMin = Math.round((enMs - stMs) / 60000);
+          const rawProgGenre = Array.isArray(p.tags) ? p.tags.join(" ") : (p.genre || "");
+          const progGenre = classifyFastGenre({
+            rawGenre: rawProgGenre,
+            channelCat: catById[cid] || "",
+            channelName: row.title || "",
+            title: p.title || row.title || "",
+            desc: p.description || row.description || "",
+            season: p.season_number,
+            episode: p.episode_number,
+            durMin
+          });
           const rating = p.ratings && p.ratings[0] ? p.ratings[0].value : "12";
           const img = p.images && ((p.images.poster && p.images.poster[0]) || (p.images.thumbnail && p.images.thumbnail[0])) || null;
           return {
             id: `tubi-${cid}-${p.id || pIdx}`,
             title: p.title || row.title,
             desc: p.description || row.description || `${row.title} live free streaming on Tubi.`,
-            genre: category,
-            ep: p.season_number && p.episode_number ? `Series ${p.season_number}, Ep ${p.episode_number}` : (p.episode_title || category),
+            genre: progGenre,
+            ep: p.season_number && p.episode_number ? `Series ${p.season_number}, Ep ${p.episode_number}` : (p.episode_title || progGenre),
             rating,
-            cast: category,
+            cast: progGenre,
             image: img,
             stars: null,
             isNew: false,
             isLiveData: true,
             thisWeek: false,
-            interests: inferInterestsFromEvent(p.title || "", p.description || "", category),
+            interests: inferInterestsFromEvent(p.title || "", p.description || "", progGenre),
             startMin: clampedStart,
             endMin: clampedEnd
           };
@@ -2785,7 +2840,7 @@ const ONAIR_LIVE = (() => {
       schedules[chId] = events;
     });
 
-    cache[`tubi_${dateStr}`] = { ts: Date.now(), channels, schedules };
+    cache[`tubi_v2_${dateStr}`] = { ts: Date.now(), channels, schedules };
     saveCache(cache);
     feedHealth.tubi = { status: "live", ts: Date.now(), note: `Live (${channels.length} ch)` };
     return { channels, schedules };
