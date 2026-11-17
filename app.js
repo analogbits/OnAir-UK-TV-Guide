@@ -5,8 +5,8 @@
 (() => {
   const { PLATFORMS, CHANNEL_CATEGORIES, INTEREST_CATEGORIES, CHANNELS, STREAMING_CATALOGUE } = ONAIR_DATA;
 
-  const START_HOUR = 6; // 06:00
-  const END_HOUR = 24; // 00:00
+  const START_HOUR = 0; // 00:00 (full 24-hour guide)
+  const END_HOUR = 24; // 24:00
   const PIXELS_PER_MIN = 4; // 240px per hour
 
   // Persistent State
@@ -339,8 +339,7 @@
 
   function getNowMinutes() {
     const now = new Date();
-    const mins = now.getHours() * 60 + now.getMinutes();
-    return mins < START_HOUR * 60 ? START_HOUR * 60 : mins;
+    return now.getHours() * 60 + now.getMinutes();
   }
 
   function formatStars(count) {
@@ -1000,7 +999,7 @@
       .map((f) => `<button class="pill-btn ${filter === f.id ? "is-active" : ""}" data-ahead-filter="${f.id}" type="button">${f.label}</button>`)
       .join("");
 
-    const nowMin = dayOffset === 0 ? getNowMinutes() : 360;
+    const nowMin = dayOffset === 0 ? getNowMinutes() : 0;
     const candidates = [];
     const seenTitles = new Set();
     const flagshipRe = /^(bbc one|bbc two|itv1|utv|stv|channel 4|5\b|rt[eé]|tg4|virgin one|bbc four|film4|sky showcase|sky atlantic|sky premiere|sky sports main)/i;
@@ -1840,7 +1839,7 @@
     renderDateStrip();
     renderEPG(true);
     requestAnimationFrame(() => {
-      const hour = Math.max(6, Math.floor((startMin || 360) / 60));
+      const hour = Math.max(0, Math.floor((startMin || 0) / 60));
       scrollEpgToHour(dayOffset === 0 ? "now" : hour);
     });
   }

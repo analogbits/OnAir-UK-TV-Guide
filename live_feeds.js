@@ -478,7 +478,7 @@ const ONAIR_LIVE = (() => {
   (async function hydrateIdbStore() {
     if (typeof indexedDB === "undefined") return;
     try {
-      const epgRec = await idbGet("epg_cache");
+      const epgRec = await idbGet("epg_cache_24h");
       if (epgRec) {
         idbStats.epgCompressedBytes = epgRec.byteLength || (epgRec.bytes ? epgRec.bytes.byteLength : 0);
         const parsed = await gzipDecompressJson(epgRec);
@@ -490,7 +490,7 @@ const ONAIR_LIVE = (() => {
         if (lsEpg) {
           const parsed = JSON.parse(lsEpg);
           memCache = memCache ? { ...parsed, ...memCache } : parsed;
-          if (await persistCompressedIdb("epg_cache", memCache, "epgCompressedBytes")) {
+          if (await persistCompressedIdb("epg_cache_24h", memCache, "epgCompressedBytes")) {
             localStorage.removeItem(STORAGE_KEY);
           }
         }
@@ -547,7 +547,7 @@ const ONAIR_LIVE = (() => {
 
     memCache = cache;
     if (typeof indexedDB !== "undefined") {
-      persistCompressedIdb("epg_cache", cache, "epgCompressedBytes");
+      persistCompressedIdb("epg_cache_24h", cache, "epgCompressedBytes");
       return;
     }
 
@@ -863,8 +863,8 @@ const ONAIR_LIVE = (() => {
         if (i > 0 && s < rows[i - 1].startMin) s += 24 * 60;
         let e = i + 1 < rows.length ? rows[i + 1].startMin : s + 60;
         if (e <= s) e += 24 * 60;
-        if (e <= 360 || s >= 24 * 60) continue;
-        const clampedStart = Math.max(360, s);
+        if (e <= 0 || s >= 24 * 60) continue;
+        const clampedStart = Math.max(0, s);
         const clampedEnd = Math.min(24 * 60, e);
         if (clampedEnd > clampedStart) {
           mapped.push({ title: rows[i].title, startMin: clampedStart, endMin: clampedEnd });
@@ -1027,14 +1027,14 @@ const ONAIR_LIVE = (() => {
             const startMin = Math.floor((stMs - dayStartMs) / 60000);
             const durMin = typeof it.duration === "number" ? Math.round(it.duration / 60) : 30;
             const endMin = startMin + Math.max(5, durMin);
-            if (endMin <= 360 || startMin >= 24 * 60) return;
+            if (endMin <= 0 || startMin >= 24 * 60) return;
             const syn = (it.synopses && (it.synopses.short || it.synopses.medium || it.synopses.long)) || "";
             events.push({
               id: `bbc-${it._id || `${isoDate}-${idx}`}`,
               title: it.title,
               desc: syn || `${it.title} (${isoDate})`,
               isRepeat: Boolean(it.isRepeat),
-              startMin: Math.max(360, startMin),
+              startMin: Math.max(0, startMin),
               endMin: Math.min(24 * 60, endMin)
             });
           });
@@ -1162,8 +1162,8 @@ const ONAIR_LIVE = (() => {
           .map((ev) => {
             const startMin = Math.floor((ev.st - futureDayStartSec) / 60);
             const endMin = Math.floor((ev.st + ev.d - futureDayStartSec) / 60);
-            if (endMin <= 360 || startMin >= 24 * 60) return null;
-            const clampedStart = Math.max(360, startMin);
+            if (endMin <= 0 || startMin >= 24 * 60) return null;
+            const clampedStart = Math.max(0, startMin);
             const clampedEnd = Math.min(24 * 60, endMin);
             if (clampedEnd <= clampedStart) return null;
             return {
@@ -1207,8 +1207,8 @@ const ONAIR_LIVE = (() => {
               const mm = (ev.duration || "").match(/(\d+)M/);
               const durMin = (hm ? Number(hm[1]) * 60 : 0) + (mm ? Number(mm[1]) : 0) || 30;
               const endMin = startMin + durMin;
-              if (endMin <= 360 || startMin >= 24 * 60) return null;
-              const clampedStart = Math.max(360, startMin);
+              if (endMin <= 0 || startMin >= 24 * 60) return null;
+              const clampedStart = Math.max(0, startMin);
               const clampedEnd = Math.min(24 * 60, endMin);
               if (clampedEnd <= clampedStart) return null;
               return {
@@ -1298,7 +1298,7 @@ const ONAIR_LIVE = (() => {
           })
           .map((ep) => {
             const parts = (ep.airtime || "12:00").split(":");
-            const startMin = Math.max(360, Number(parts[0]) * 60 + Number(parts[1] || 0));
+            const startMin = Math.max(0, Number(parts[0]) * 60 + Number(parts[1] || 0));
             const endMin = Math.min(24 * 60, startMin + (ep.runtime || 60));
             if (endMin <= startMin) return null;
             const show = ep.show || {};
@@ -1478,9 +1478,9 @@ const ONAIR_LIVE = (() => {
             .map((ev) => {
               const startMin = Math.floor((ev.st - dayStartSec) / 60);
               const endMin = Math.floor((ev.st + ev.d - dayStartSec) / 60);
-              if (endMin <= 360 || startMin >= 24 * 60) return null;
+              if (endMin <= 0 || startMin >= 24 * 60) return null;
 
-              const clampedStart = Math.max(360, startMin);
+              const clampedStart = Math.max(0, startMin);
               const clampedEnd = Math.min(24 * 60, endMin);
               if (clampedEnd <= clampedStart) return null;
 
@@ -1626,8 +1626,8 @@ const ONAIR_LIVE = (() => {
                 const durMin = isCompact ? ev.d : parseIsoDurMins(ev.duration);
                 const startMin = Math.floor((stSec - dayStartSec) / 60);
                 const endMin = startMin + durMin;
-                if (endMin <= 360 || startMin >= 24 * 60) return null;
-                const clampedStart = Math.max(360, startMin);
+                if (endMin <= 0 || startMin >= 24 * 60) return null;
+                const clampedStart = Math.max(0, startMin);
                 const clampedEnd = Math.min(24 * 60, endMin);
                 if (clampedEnd <= clampedStart) return null;
                 const genre = mapFreeviewGenre(isCompact ? ev.g : ev.genre, title, chCatBySid.get(String(sid)));
@@ -1707,7 +1707,7 @@ const ONAIR_LIVE = (() => {
             })
             .map((ep) => {
               const parts = (ep.airtime || "12:00").split(":");
-              const startMin = Math.max(360, Number(parts[0]) * 60 + Number(parts[1] || 0));
+              const startMin = Math.max(0, Number(parts[0]) * 60 + Number(parts[1] || 0));
               const endMin = Math.min(24 * 60, startMin + (ep.runtime || 60));
               if (endMin <= startMin) return null;
               const show = ep.show || {};
@@ -2131,7 +2131,7 @@ const ONAIR_LIVE = (() => {
   function clearEpgCache() {
     memCache = {};
     idbStats.epgCompressedBytes = 0;
-    idbDelete("epg_cache");
+    idbDelete("epg_cache_24h");
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -2558,8 +2558,8 @@ const ONAIR_LIVE = (() => {
           if (Number.isNaN(stMs) || Number.isNaN(enMs)) return null;
           const startMin = Math.floor((stMs - midnightMs) / 60000);
           const endMin = Math.floor((enMs - midnightMs) / 60000);
-          if (endMin <= 360 || startMin >= 24 * 60) return null;
-          const clampedStart = Math.max(360, startMin);
+          if (endMin <= 0 || startMin >= 24 * 60) return null;
+          const clampedStart = Math.max(0, startMin);
           const clampedEnd = Math.min(24 * 60, endMin);
           if (clampedEnd <= clampedStart) return null;
 
@@ -2755,8 +2755,8 @@ const ONAIR_LIVE = (() => {
           if (Number.isNaN(stMs) || Number.isNaN(enMs)) return null;
           const startMin = Math.floor((stMs - midnightMs) / 60000);
           const endMin = Math.floor((enMs - midnightMs) / 60000);
-          if (endMin <= 360 || startMin >= 24 * 60) return null;
-          const clampedStart = Math.max(360, startMin);
+          if (endMin <= 0 || startMin >= 24 * 60) return null;
+          const clampedStart = Math.max(0, startMin);
           const clampedEnd = Math.min(24 * 60, endMin);
           if (clampedEnd <= clampedStart) return null;
 
