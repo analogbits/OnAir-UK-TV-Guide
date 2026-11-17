@@ -4082,7 +4082,7 @@
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const maxYear = now.getFullYear() + 1;
-    const minYear = 1990;
+    const minYear = 1989;
 
     function renderCalendar() {
       const yearOptions = [];

@@ -24,7 +24,7 @@ Located in the top header bar, the **Guide Mode** dropdown switches **Time Machi
 - `🔄 Auto` — automatically follows the current time of year.
 - **7 Built-in Seasons & Holidays:** `🎄 Christmas (Nov 10 – Dec 31)`, `❄️ Winter (Jan 1 – Feb 10)`, `💘 Romance (Feb 11 – Feb 18)`, `🐣 Spring & Easter (Feb 19 – Apr 30)`, `☀️ Summer (May 1 – Aug 31)`, `🍂 Autumn (Sep 1 – Oct 15)`, and `🎃 Halloween (Oct 16 – Nov 9)`.
 
-### 3. Time Machine (`1990 – Next Year`)
+### 3. Time Machine (`1989 – Next Year`)
 - Click **Time Machine** on the timeline toolbar to pick any past or future date using the **Year / Month** dropdowns, calendar grid, or quick presets (including seasonal holiday dates when in Seasonal Mode, plus *1 Year Ago*, *5 Years Ago*, *27 May 2020*, and *Live (Today)*).
 - **Multi-Source Backups:** Automatically checks Sky EPG, Freeview, `tv24.co.uk`, **BBC Genome** (for classic/terrestrial BBC schedules), and **TVMaze (UK & IE)**.
 - **Future Look-Ahead:** When browsing upcoming holiday/Christmas dates beyond `+6` days, the Time Machine banner surfaces available future schedules plus quick links to BBC Christmas & TV Radar.
