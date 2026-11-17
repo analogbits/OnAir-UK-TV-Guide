@@ -477,26 +477,40 @@
   }
 
   function syncGuideModeUI() {
+    const autoSeason = getAutoSeason();
     const season = getActiveSeason();
     const seasonal = isSeasonalMode();
-    [document.getElementById("guideModeToggleBtn"), document.getElementById("headerGuideModeBtn")].forEach((btn) => {
-      if (!btn) return;
-      btn.textContent = seasonal ? `${season.chip} Mode` : "📺 Normal";
-      btn.title = seasonal
-        ? `Seasonal Mode active (${season.chip}) — click to switch entire guide to Normal viewing`
-        : `Normal Mode active — click to switch entire guide to ${season.chip} Seasonal Mode`;
-      btn.style.borderColor = seasonal ? "var(--accent)" : "";
-      btn.style.color = seasonal ? "var(--accent)" : "";
-      btn.onclick = toggleGuideMode;
+    const selectedVal = seasonal ? (state.seasonOverride || "auto") : "normal";
+    const optionsHtml = [
+      `<option value="normal">📺 Normal Viewing</option>`,
+      `<option value="auto">🔄 Auto (${escapeHtml(autoSeason.chip)})</option>`,
+      ...SEASON_CALENDAR.map(
+        (s) => `<option value="${s.id}">${escapeHtml(s.chip)} (${escapeHtml(s.windowLabel)})</option>`
+      )
+    ].join("");
+    [document.getElementById("guideModeSelect"), document.getElementById("headerGuideModeSelect")].forEach((sel) => {
+      if (!sel) return;
+      sel.innerHTML = optionsHtml;
+      sel.value = selectedVal;
+      sel.style.borderColor = seasonal ? "var(--accent)" : "";
+      sel.style.color = seasonal ? "var(--accent)" : "";
+      sel.onchange = (e) => setGuideModeChoice(e.target.value);
     });
     if (!state.timeMachineDate && el.timeMachineBtnLabel) {
       el.timeMachineBtnLabel.textContent = seasonal ? `${season.chip.split(" ")[0]} Time Machine` : "Time Machine";
     }
   }
 
-  function toggleGuideMode() {
-    state.guideMode = isSeasonalMode() ? "normal" : "seasonal";
-    localStorage.setItem("onair_guide_mode", state.guideMode);
+  function setGuideModeChoice(val) {
+    if (val === "normal") {
+      state.guideMode = "normal";
+      localStorage.setItem("onair_guide_mode", "normal");
+    } else {
+      state.guideMode = "seasonal";
+      state.seasonOverride = val || "auto";
+      localStorage.setItem("onair_guide_mode", "seasonal");
+      localStorage.setItem("onair_season_override", state.seasonOverride);
+    }
     const season = getActiveSeason();
     syncGuideModeUI();
     renderWhatToWatch();
@@ -505,7 +519,11 @@
       el.timeMachineBtn.click();
       el.timeMachineBtn.click();
     }
-    showToast(isSeasonalMode() ? `Switched entire guide to ${season.chip} Mode` : "Switched entire guide to 📺 Normal Viewing");
+    showToast(
+      isSeasonalMode()
+        ? `Guide mode: ${season.chip} (Time Machine, What to Watch & Streaming)`
+        : "Guide mode: 📺 Normal Viewing"
+    );
   }
 
   function progMatchesCategory(prog, category, chName = "") {
@@ -3984,7 +4002,7 @@
           { label: "❄️ Winter Specials", iso: `${yNow}-01-15` },
           { label: "🎄 Last Xmas Day", iso: `${yNow - 1}-12-25` }
         ],
-        romance: [
+        valentines: [
           { label: "💘 Valentine's Day", iso: `${yNow}-02-14` },
           { label: "💘 Valentine's Eve", iso: `${yNow}-02-13` },
           { label: "🎄 Last Xmas Day", iso: `${yNow - 1}-12-25` }
