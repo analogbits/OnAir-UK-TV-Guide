@@ -164,6 +164,43 @@
     return out;
   }
 
+  const dynamicSimilarStreamMap = new Map();
+
+  function sanitizeUkOfficialSite(url) {
+    if (!url) return "";
+    if (/tvmaze\.com|thetvdb\.com|wikidata\.org|wikipedia\.org|peacocktv\.com|hulu\.com|10play\.com\.au|threenow\.co\.nz|ctv\.ca|nbc\.com|cbs\.com|abc\.com|fox\.com/i.test(url)) {
+      return "";
+    }
+    return url;
+  }
+
+  function resolveUkPlatformForShow(title = "", rawPlatform = "", fallbackPlatform = "") {
+    const t = String(title || "").toLowerCase();
+    const p = String(rawPlatform || "").toLowerCase();
+    if (/\b(traitors|drag race|masterchef|strictly|doctor who|eastenders|silent witness|line of duty|happy valley|blue lights|vigil|ludwig|ghosts|gavin\s*&\s*stacey|peaky blinders|call the midwife|death in paradise|beyond paradise|shetland|strike|wolf hall|inside no\.?\s*9|cunk|race across the world|gladiators|mortimer\s*&\s*whitehouse|would i lie to you|qi\b|have i got news|blankety blank|pointless|the repair shop|countryfile|antiques roadshow|springwatch|autumnwatch|winterwatch|storyville|panorama|louis theroux|top gear)\b/i.test(t) || /\bbbc|iplayer|rt[eé]\b/i.test(p)) {
+      return { platform: "BBC iPlayer", color: "#ff4c98" };
+    }
+    if (/\b(love island|i'm a celebrity|coronation street|emmerdale|vera\b|endeavour|grace\b|mcdonald\s*&\s*dodds|unforgotten|broadchurch|trigger point|red eye|bates vs the post office|britain's got talent|the masked singer|the chase|tipping point|deal or no deal|wheel of fortune|good morning britain|lorraine|this morning|loose women)\b/i.test(t) || /\bitv|utv|stv\b/i.test(p)) {
+      return { platform: "ITVX", color: "#2563eb" };
+    }
+    if (/\b(bake off|taskmaster|gogglebox|married at first sight|first dates|location,\s*location|grand designs|hollyoaks|derry girls|inbetweeners|peep show|friday night dinner|big boys|hunted|24 hours in police|24 hours in a&e|8 out of 10 cats|the last leg|countdown)\b/i.test(t) || /\bchannel 4|all 4|more4|e4|film4\b/i.test(p)) {
+      return { platform: "Channel 4", color: "#1d4ed8" };
+    }
+    if (/\bchannel 5|my5|5star|5usa\b/i.test(p)) return { platform: "My5", color: "#4338ca" };
+    if (/\bnetflix\b/i.test(p)) return { platform: "Netflix", color: "#e50914" };
+    if (/\bdisney\b/i.test(p)) return { platform: "Disney+", color: "#0063e5" };
+    if (/\bapple\b/i.test(p)) return { platform: "Apple TV+", color: "#1d1d1f" };
+    if (/\bparamount\b/i.test(p)) return { platform: "Paramount+", color: "#0064ff" };
+    if (/\bsky|now\b|hbo|max\b|peacock\b/i.test(p)) return { platform: "Sky / NOW", color: "#0f766e" };
+    if (/\bpluto\b/i.test(p)) return { platform: "Pluto TV", color: "#18181b" };
+    if (/\btubi\b/i.test(p)) return { platform: "Tubi", color: "#fa382f" };
+    if (/\bprime|amazon\b/i.test(p)) return { platform: "Prime Video", color: "#00a8e1" };
+    if (fallbackPlatform && WATCH_PLATFORMS && WATCH_PLATFORMS[fallbackPlatform]) {
+      return { platform: fallbackPlatform, color: WATCH_PLATFORMS[fallbackPlatform].color };
+    }
+    return { platform: rawPlatform || "BBC iPlayer", color: "#334155" };
+  }
+
   function getMergedCatalogue() {
     const fastItems = getPlutoTubiStreamingItems();
     const seen = new Set(STREAMING_CATALOGUE.map((i) => i.title.toLowerCase()));
@@ -172,7 +209,13 @@
       const k = String(i.title || "").toLowerCase();
       if (!k || seen.has(k)) return;
       seen.add(k);
-      extras.push(i);
+      const ukMap = resolveUkPlatformForShow(i.title, i.platform);
+      extras.push({
+        ...i,
+        platform: ukMap.platform,
+        platformColor: ukMap.color,
+        officialSite: sanitizeUkOfficialSite(i.officialSite)
+      });
     });
     return [...extras, ...STREAMING_CATALOGUE];
   }
@@ -2298,30 +2341,33 @@
   function renderWhereToWatchBlock(rawTitle, primaryPlatform, officialSite, liveOpts = null) {
     const cleanTitle = rawTitle.replace(/^Film:\s*/i, "").trim();
     const q = encodeURIComponent(cleanTitle);
-    const primary = WATCH_PLATFORMS[primaryPlatform];
+    const ukOverride = resolveUkPlatformForShow(cleanTitle, primaryPlatform);
+    const effectivePlatform = ukOverride && WATCH_PLATFORMS[ukOverride.platform] ? ukOverride.platform : primaryPlatform;
+    const safeOfficial = sanitizeUkOfficialSite(officialSite);
+    const primary = WATCH_PLATFORMS[effectivePlatform];
     const isLiveNow = Boolean(liveOpts && liveOpts.isLive && liveOpts.liveUrl);
     const primaryHref = isLiveNow
       ? liveOpts.liveUrl
-      : officialSite || (primary ? primary.url(q) : `https://www.justwatch.com/uk/search?q=${q}`);
+      : safeOfficial || (primary ? primary.url(q) : `https://www.justwatch.com/uk/search?q=${q}`);
     const primaryColor = isLiveNow ? "#dc2626" : (primary ? primary.color : "#0f4c5c");
     const primaryLabel = isLiveNow
       ? `Watch Live on ${liveOpts.channelName}`
-      : primaryPlatform && primaryPlatform !== "Live TV" && primaryPlatform !== "On Demand"
-      ? `Watch on ${primaryPlatform}`
+      : effectivePlatform && effectivePlatform !== "Live TV" && effectivePlatform !== "On Demand"
+      ? `Watch on ${effectivePlatform}`
       : "Find Where to Stream";
 
     const quickCheckList = ["BBC iPlayer", "ITVX", "Channel 4", "My5", "Pluto TV", "Tubi", "Netflix", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "MUBI", "discovery+"]
-      .filter((name) => name !== primaryPlatform);
+      .filter((name) => name !== effectivePlatform);
 
     return `
       <div class="watch-links-box">
         <div class="watch-links-title">${isLiveNow ? "Live Now &bull; Watch Live Stream" : "Where to Watch &amp; Direct Show Link"}</div>
         <div class="watch-primary-row">
           <a id="modalDirectWatchBtn" class="watch-launch-btn" style="background:${primaryColor}" href="${primaryHref}" target="_blank" rel="noopener">
-            &#9654; ${isLiveNow ? primaryLabel : (officialSite ? `Watch "${cleanTitle}" Directly` : primaryLabel)} &nearr;
+            &#9654; ${isLiveNow ? primaryLabel : (safeOfficial ? `Watch "${cleanTitle}" Directly` : primaryLabel)} &nearr;
           </a>
           ${isLiveNow && liveOpts.liveUrl.startsWith("https://www.nowtv.com/") ? `<a class="watch-launch-btn" style="background:#0f172a" href="https://www.sky.com/watch/sky-go/all" target="_blank" rel="noopener">Sky Go &nearr;</a>` : ""}
-          ${isLiveNow && primary ? `<a class="watch-launch-btn" style="background:${primary.color}" href="${officialSite || primary.url(q)}" target="_blank" rel="noopener">On Demand (${primaryPlatform}) &nearr;</a>` : ""}
+          ${isLiveNow && primary ? `<a class="watch-launch-btn" style="background:${primary.color}" href="${safeOfficial || primary.url(q)}" target="_blank" rel="noopener">On Demand (${effectivePlatform}) &nearr;</a>` : ""}
           <a class="watch-launch-btn" style="background:#334155" href="https://www.justwatch.com/uk/search?q=${q}" target="_blank" rel="noopener">
             JustWatch UK &nearr;
           </a>
@@ -2365,9 +2411,10 @@
     ONAIR_LIVE.resolveDirectShowLink(rawTitle).then((resolved) => {
       if (!resolved) return;
       const btn = document.getElementById("modalDirectWatchBtn");
-      if (btn && !presetOpts.isLive && !currentOfficialSite && resolved.directUrl) {
+      const safeDirect = sanitizeUkOfficialSite(resolved.directUrl);
+      if (btn && !presetOpts.isLive && !sanitizeUkOfficialSite(currentOfficialSite) && safeDirect) {
         const cleanTitle = rawTitle.replace(/^Film:\s*/i, "").trim();
-        btn.href = resolved.directUrl;
+        btn.href = safeDirect;
         btn.innerHTML = `&#9654; Watch "${cleanTitle}" Directly &nearr;`;
       }
       const reviewsBar = document.getElementById("modalReviewsBar");
@@ -2414,6 +2461,7 @@
       if ((Array.isArray(resolved.castList) && resolved.castList.length) || (Array.isArray(resolved.crewList) && resolved.crewList.length)) {
         populateModalSimilarSection({
           title: rawTitle,
+          platform: presetOpts.platform || "",
           genre: presetOpts.genre || "",
           desc: resolved.summary || presetOpts.desc || "",
           cast: [...(resolved.castList || []), ...(resolved.crewList || [])].join(", "),
@@ -2572,10 +2620,10 @@
         const candTitleLower = cand.title.toLowerCase();
         const candGenre = cand.genre.toLowerCase();
 
-        // Massive boost for same-franchise / sister shows (e.g. "The Traitors Ireland" -> "The Traitors", "The Traitors Italia", "The Traitors US")
+        // Massive boost for same-franchise / sister shows (e.g. "The Traitors Ireland" -> "The Traitors", "The Traitors US", "The Traitors Australia")
         titleStems.forEach((stem) => {
           if (stem.length >= 4 && candTitleLower.includes(stem)) {
-            score += 120;
+            score += /\b(telugu|italia|philippines|habibi|españa|polska|qu[eé]bec)\b/i.test(candTitleLower) ? 45 : 135;
           }
         });
 
@@ -2697,18 +2745,43 @@
             const mapped = (Array.isArray(rows) ? rows : []).slice(0, 6).map((entry) => {
               const s = entry && entry.show;
               if (!s || !s.name) return null;
-              const net = (s.network && s.network.name) || (s.webChannel && s.webChannel.name) || "TV Series";
+              const rawNet = (s.network && s.network.name) || (s.webChannel && s.webChannel.name) || "TV Series";
               const country = (s.network && s.network.country && s.network.country.code) || (s.webChannel && s.webChannel.country && s.webChannel.country.code) || "";
+              const displayTitle = country && !s.name.toLowerCase().includes(country.toLowerCase()) ? `${s.name} (${country})` : s.name;
+              const ukPlat = resolveUkPlatformForShow(displayTitle, rawNet, target.platform || "");
               const summary = String(s.summary || "").replace(/<[^>]+>/g, "").trim();
+              const simId = `sim-tvm-${s.id}`;
+              const gName = (Array.isArray(s.genres) && s.genres[0]) || target.genre || "Entertainment";
+              const starVal = s.rating && s.rating.average ? Math.min(5, Math.max(3, Math.round(s.rating.average / 2))) : 4;
+              const fullItem = {
+                id: simId,
+                title: displayTitle,
+                platform: ukPlat.platform,
+                platformColor: ukPlat.color,
+                type: "TV Series",
+                genre: gName,
+                seasons: s.status || "Series",
+                year: (s.premiered || "").slice(0, 4) || new Date().getFullYear(),
+                rating: starVal,
+                age: "15",
+                cast: (Array.isArray(s.genres) && s.genres.join(", ")) || gName,
+                desc: summary || `${displayTitle} streaming in the UK on ${ukPlat.platform}.`,
+                image: (s.image && (s.image.medium || s.image.original)) || "",
+                officialSite: sanitizeUkOfficialSite(s.officialSite),
+                imdbId: (s.externals && s.externals.imdb) || null,
+                imdbScore: (s.rating && s.rating.average) || null,
+                isLiveData: true
+              };
+              dynamicSimilarStreamMap.set(simId, fullItem);
               return {
-                kind: "search",
-                id: `tvm-${s.id}`,
-                title: country && !s.name.toLowerCase().includes(country.toLowerCase()) ? `${s.name} (${country})` : s.name,
-                badge: net,
-                color: "#dc2626",
-                genre: (Array.isArray(s.genres) && s.genres[0]) || target.genre || "Entertainment",
-                desc: summary || `${s.name} on ${net}.`,
-                rating: (s.rating && s.rating.average ? s.rating.average / 2 : 4.2)
+                kind: "stream",
+                id: simId,
+                title: displayTitle,
+                badge: ukPlat.platform,
+                color: ukPlat.color,
+                genre: gName,
+                desc: fullItem.desc,
+                rating: starVal
               };
             }).filter(Boolean);
             similarShowSearchCache.set(qKey, mapped);
@@ -2855,6 +2928,7 @@
     const isFilmProg = prog.genre === "Film" || /^film:/i.test(prog.title || "");
     populateModalSimilarSection({
       title: prog.title,
+      platform: ch.catchup || "",
       genre: prog.genre || "",
       desc: prog.desc || "",
       cast: prog.cast || "",
@@ -2863,6 +2937,7 @@
     });
     enrichModalDirectLink(prog.title, prog.officialSite, {
       isLive,
+      platform: ch.catchup || "",
       genre: prog.genre || "",
       desc: prog.desc || "",
       interests: prog.interests || [],
@@ -2871,7 +2946,7 @@
   }
 
   function openStreamModal(streamId) {
-    const item = getMergedCatalogue().find((s) => s.id === streamId);
+    const item = getMergedCatalogue().find((s) => s.id === streamId) || dynamicSimilarStreamMap.get(streamId);
     if (!item) return;
 
     const saved = isInWatchlist(item.id);
@@ -2937,6 +3012,7 @@
     el.detailModal.classList.remove("hidden");
     populateModalSimilarSection({
       title: item.title,
+      platform: item.platform || "",
       genre: item.genre || "",
       desc: item.desc || "",
       cast: item.cast || "",
@@ -2948,6 +3024,7 @@
       imdbScore: item.imdbScore,
       rtSlug: item.rtSlug,
       rtScore: item.rtScore,
+      platform: item.platform || "",
       genre: item.genre || "",
       desc: item.desc || "",
       interests: item.interests || [],

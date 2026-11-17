@@ -1815,7 +1815,7 @@ const ONAIR_LIVE = (() => {
 
           const imdbId = show.externals && show.externals.imdb ? show.externals.imdb : null;
           const score10 = show.rating && show.rating.average ? show.rating.average : null;
-          const directUrl = normalizeDirectUrl(show.officialSite || show.url || null);
+          const directUrl = normalizeDirectUrl(show.officialSite || null);
           const vaultKey = normalizeTitleKey(show.name);
           const existingVault = vault[vaultKey];
 
@@ -2012,6 +2012,9 @@ const ONAIR_LIVE = (() => {
 
   function normalizeDirectUrl(url) {
     if (!url) return null;
+    if (/tvmaze\.com|thetvdb\.com|wikidata\.org|wikipedia\.org|peacocktv\.com|hulu\.com|10play\.com\.au|threenow\.co\.nz|ctv\.ca|nbc\.com|cbs\.com|abc\.com|fox\.com/i.test(url)) {
+      return null;
+    }
     if (/bbc\.co\.uk\/programmes\/([a-z0-9]+)/i.test(url)) {
       const pid = url.match(/bbc\.co\.uk\/programmes\/([a-z0-9]+)/i)[1];
       return `https://www.bbc.co.uk/iplayer/episodes/${pid}`;
@@ -2260,7 +2263,7 @@ const ONAIR_LIVE = (() => {
       let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : [];
 
       const mapTvmazeEmbeds = (data) => {
-        directUrl = directUrl || normalizeDirectUrl(data.officialSite || data.url || null);
+        directUrl = normalizeDirectUrl(directUrl) || normalizeDirectUrl(data.officialSite || null);
         tvmazeUrl = tvmazeUrl || data.url || null;
         imdbId = imdbId || (data.externals && data.externals.imdb ? data.externals.imdb : null);
         score10 = score10 || (data.rating && data.rating.average ? data.rating.average : null);
