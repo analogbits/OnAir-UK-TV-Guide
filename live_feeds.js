@@ -2462,7 +2462,7 @@ const ONAIR_LIVE = (() => {
     }
 
     const dayStart = new Date();
-    dayStart.setHours(6, 0, 0, 0);
+    dayStart.setHours(0, 0, 0, 0);
     dayStart.setDate(dayStart.getDate() + dayOffset);
     const dayEnd = new Date(dayStart);
     dayEnd.setHours(23, 59, 59, 0);
@@ -2471,7 +2471,7 @@ const ONAIR_LIVE = (() => {
     midnight.setHours(0, 0, 0, 0);
     const midnightMs = midnight.getTime();
 
-    // Pluto TV caps timelines per channel from `start`; for Today, start at max(06:00, now - 2h)
+    // Pluto TV caps timelines per channel from `start`; for Today, start at max(00:00, now - 2h)
     // so current & evening/night programmes are never truncated.
     const queryStart = dayOffset === 0
       ? new Date(Math.max(dayStart.getTime(), Date.now() - 2 * 60 * 60 * 1000))
@@ -2533,7 +2533,7 @@ const ONAIR_LIVE = (() => {
 
       channels.push({
         id: chId,
-        sid: ch._id,
+        sid: chId,
         plutoSlug: ch.slug || ch._id,
         name: ch.name,
         short: makeShortCode(ch.name),
@@ -2729,7 +2729,7 @@ const ONAIR_LIVE = (() => {
 
       channels.push({
         id: chId,
-        sid: cid,
+        sid: chId,
         tubiId: cid,
         name: row.title,
         short: makeShortCode(row.title),

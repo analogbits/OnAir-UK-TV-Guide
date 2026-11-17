@@ -129,7 +129,9 @@
           if (newPluto.length) liveChannels = [...liveChannels, ...newPluto];
           const currentMap = liveEpgByDay.get(dayOffset) || {};
           pluto.channels.forEach((c) => {
-            if (pluto.schedules[c.id]) currentMap[c.sid] = pluto.schedules[c.id];
+            const evs = pluto.schedules[c.id] || pluto.schedules[c.sid] || [];
+            currentMap[c.id] = evs;
+            if (c.sid) currentMap[c.sid] = evs;
           });
           liveEpgByDay.set(dayOffset, currentMap);
           if (state.view === "epg") renderEPG(false);
@@ -151,7 +153,9 @@
           if (newTubi.length) liveChannels = [...liveChannels, ...newTubi];
           const currentMap = liveEpgByDay.get(dayOffset) || {};
           tubi.channels.forEach((c) => {
-            if (tubi.schedules[c.id]) currentMap[c.sid] = tubi.schedules[c.id];
+            const evs = tubi.schedules[c.id] || tubi.schedules[c.sid] || [];
+            currentMap[c.id] = evs;
+            if (c.sid) currentMap[c.sid] = evs;
           });
           liveEpgByDay.set(dayOffset, currentMap);
           if (state.view === "epg") renderEPG(false);
