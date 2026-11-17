@@ -3034,6 +3034,7 @@ select {
 }
 
 .chat-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3101,14 +3102,26 @@ select {
 }
 
 .chat-quick-prompts {
+  flex-shrink: 0;
   display: flex;
+  align-items: center;
   gap: 6px;
   overflow-x: auto;
+  overflow-y: hidden;
   padding: 8px 12px;
   border-top: 1px solid var(--border-subtle);
+  scrollbar-width: thin;
+}
+
+.chat-quick-prompts > button,
+.chat-quick-prompts .chip-pill {
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .chat-input-row {
+  flex-shrink: 0;
   display: flex;
   gap: 8px;
   padding: 10px 12px;
@@ -3201,5 +3214,88 @@ select {
 @media (max-width: 520px) {
   :root {
     --epg-channel-col: 148px;
+  }
+}
+
+/* Compact EPG Row Density Mode */
+.epg-grid.is-compact {
+  --epg-row-height: 54px;
+}
+
+.epg-grid.is-compact .epg-prog {
+  top: 4px;
+  height: calc(var(--epg-row-height) - 8px);
+  padding: 5px 8px;
+}
+
+.epg-grid.is-compact .channel-badge {
+  width: 28px;
+  height: 28px;
+  font-size: 9px;
+}
+
+/* Mobile Landscape Full Polish */
+@media (max-height: 540px) and (orientation: landscape) {
+  .site-header .header-inner {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    gap: 8px;
+  }
+
+  .controls-bar {
+    padding: 6px 0;
+  }
+
+  .timeline-toolbar {
+    padding: 6px 0;
+  }
+
+  .epg-wrapper {
+    height: calc(100dvh - 150px);
+    min-height: 200px;
+  }
+
+  .chat-panel,
+  .debug-panel {
+    top: 8px !important;
+    bottom: 8px !important;
+    right: 12px !important;
+    left: auto !important;
+    width: min(420px, calc(100vw - 24px)) !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+
+  .chat-header {
+    padding: 8px 12px;
+  }
+
+  .chat-subtitle {
+    display: none;
+  }
+
+  .chat-quick-prompts {
+    padding: 5px 10px;
+  }
+
+  .chat-input-row {
+    padding: 6px 10px;
+  }
+
+  .modal-card {
+    max-height: calc(100dvh - 20px) !important;
+    overflow-y: auto !important;
+  }
+
+  .tm-popover {
+    position: fixed !important;
+    top: 8px !important;
+    bottom: 8px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    width: min(380px, calc(100vw - 24px)) !important;
+    max-height: calc(100dvh - 16px) !important;
+    overflow-y: auto !important;
+    z-index: 9999 !important;
   }
 }

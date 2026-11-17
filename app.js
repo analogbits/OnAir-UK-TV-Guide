@@ -7,7 +7,7 @@
 
   const START_HOUR = 0; // 00:00 (full 24-hour guide)
   const END_HOUR = 24; // 24:00
-  const PIXELS_PER_MIN = 4; // 240px per hour
+  let PIXELS_PER_MIN = Number(localStorage.getItem("onair_epg_zoom") || 4); // 240px per hour
 
   // Migrate any legacy rt_* localStorage keys once so saved items are never lost
   [
@@ -61,7 +61,12 @@
     seasonalSourceFilter: "all",
     wtwAheadDayOffset: 0,
     wtwAheadFilter: "All",
-    timeMachineDate: null
+    timeMachineDate: null,
+    defaultView: localStorage.getItem("onair_default_view") || "epg",
+    epgDensity: localStorage.getItem("onair_epg_density") || "comfortable",
+    epgZoom: Number(localStorage.getItem("onair_epg_zoom") || 4),
+    hideTeleshopping: localStorage.getItem("onair_hide_teleshopping") === "1",
+    reminderLeadMins: Number(localStorage.getItem("onair_reminder_lead") || 10)
   };
   let timeMachineEpg = null;
 
@@ -426,10 +431,11 @@
     const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const nowMin = now.getHours() * 60 + now.getMinutes();
     let changed = false;
+    const leadMins = Number(state.reminderLeadMins || 10);
     state.reminderItems.forEach((item) => {
       if (!item || item.alerted || item.isoDate !== todayIso) return;
       const diff = item.startMin - nowMin;
-      if (diff >= -1 && diff <= 10) {
+      if (diff >= -1 && diff <= leadMins) {
         item.alerted = true;
         changed = true;
         const msg = diff <= 0
@@ -832,14 +838,19 @@
         return bHas - aHas;
       });
     }
+    PIXELS_PER_MIN = Number(state.epgZoom || 4);
+    if (el.epgGrid) {
+      el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
+    }
     const totalMinutes = (END_HOUR - START_HOUR) * 60;
     const trackWidth = totalMinutes * PIXELS_PER_MIN;
+    const tickWidth = 30 * PIXELS_PER_MIN;
 
     // Time Header
     let ticksHtml = "";
     for (let m = START_HOUR * 60; m < END_HOUR * 60; m += 30) {
       const isHour = m % 60 === 0;
-      ticksHtml += `<div class="epg-time-tick ${isHour ? "is-hour" : ""}">${formatTime(m)}</div>`;
+      ticksHtml += `<div class="epg-time-tick ${isHour ? "is-hour" : ""}" style="width:${tickWidth}px;">${formatTime(m)}</div>`;
     }
 
     let rowsHtml = "";
@@ -848,7 +859,10 @@
     } else {
       rowsHtml = channels
         .map((ch) => {
-          const progs = getSchedule(ch.id, state.dayOffset);
+          const rawProgs = getSchedule(ch.id, state.dayOffset);
+          const progs = Array.isArray(rawProgs) && state.hideTeleshopping
+            ? rawProgs.filter((p) => !/\b(teleshopping|shop on tv|ideal world|qvc|paid programming|infomercial)\b/i.test(p.title || ""))
+            : rawProgs;
           const isFav = state.favorites.has(ch.id);
           const chNum = ch.numbers[state.platform];
 
@@ -3637,7 +3651,72 @@
           </select>
         </div>
 
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Default Startup View</strong>
+            <span>Choose which tab opens first when you launch OnAir UK.</span>
+          </div>
+          <select id="settingDefaultViewSelect" class="settings-select">
+            <option value="epg" ${state.defaultView === "epg" ? "selected" : ""}>TV Guide (EPG Grid)</option>
+            <option value="now-next" ${state.defaultView === "now-next" ? "selected" : ""}>Now &amp; Next</option>
+            <option value="what-to-watch" ${state.defaultView === "what-to-watch" ? "selected" : ""}>What to Watch</option>
+            <option value="streaming" ${state.defaultView === "streaming" ? "selected" : ""}>Streaming Catalogue</option>
+            <option value="live-feeds" ${state.defaultView === "live-feeds" ? "selected" : ""}>What's New</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>EPG Grid Row Density</strong>
+            <span>Switch to Compact rows to fit more channels at once (great on mobile &amp; landscape).</span>
+          </div>
+          <select id="settingDensitySelect" class="settings-select">
+            <option value="comfortable" ${state.epgDensity === "comfortable" ? "selected" : ""}>Comfortable (Default)</option>
+            <option value="compact" ${state.epgDensity === "compact" ? "selected" : ""}>Compact (More Channels Visible)</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>EPG Timeline Horizontal Zoom</strong>
+            <span>Widen programme blocks to read short 15–30 min shows easily, or narrow to see more hours.</span>
+          </div>
+          <select id="settingZoomSelect" class="settings-select">
+            <option value="3" ${Number(state.epgZoom) === 3 ? "selected" : ""}>Compact (More hours visible)</option>
+            <option value="4" ${Number(state.epgZoom) === 4 ? "selected" : ""}>Standard (Default)</option>
+            <option value="6" ${Number(state.epgZoom) === 6 ? "selected" : ""}>Expanded (Wider programme blocks)</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Hide Teleshopping &amp; Paid Programming</strong>
+            <span>Automatically hides overnight Teleshopping / Shop on TV blocks in the EPG grid.</span>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
+            <input id="settingHideTeleToggle" type="checkbox" ${state.hideTeleshopping ? "checked" : ""} />
+            ${state.hideTeleshopping ? "Hidden" : "Shown"}
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Programme Reminder Lead Time</strong>
+            <span>How many minutes before broadcast to trigger browser &amp; in-app notifications.</span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select id="settingReminderLeadSelect" class="settings-select">
+              <option value="5" ${Number(state.reminderLeadMins) === 5 ? "selected" : ""}>5 minutes before</option>
+              <option value="10" ${Number(state.reminderLeadMins) === 10 ? "selected" : ""}>10 minutes before (Default)</option>
+              <option value="15" ${Number(state.reminderLeadMins) === 15 ? "selected" : ""}>15 minutes before</option>
+              <option value="30" ${Number(state.reminderLeadMins) === 30 ? "selected" : ""}>30 minutes before</option>
+            </select>
+            <button id="testReminderAlertBtn" class="btn-secondary" type="button" style="padding:6px 12px;">🔔 Test Alert</button>
+          </div>
+        </div>
+
         <div class="settings-actions">
+          <button id="openHelpGuideFromSettingsBtn" class="btn-primary" type="button">📖 Open Interactive Help &amp; User Guide</button>
           <button id="rerunSetupWizardBtn" class="btn-secondary" type="button">Re-run Setup Wizard</button>
           <button id="reinitAppBtn" class="btn-danger-outline" type="button">Reset &amp; Re-initialise Setup</button>
         </div>
@@ -3710,7 +3789,7 @@
 
         <div class="storage-stat-grid">
           <div class="storage-stat-box">
-            <div class="storage-stat-val">${report.mergedShowsCount} <span style="font-size:13px; font-weight:500; color:var(--text-muted);">/ 5,000</span></div>
+            <div class="storage-stat-val">${report.mergedShowsCount} <span style="font-size:13px; font-weight:500; color:var(--text-muted);">/ 25,000</span></div>
             <div class="storage-stat-lbl">Total Cached Shows &amp; Links</div>
           </div>
           <div class="storage-stat-box">
@@ -3823,6 +3902,80 @@
       renderCategoryPills();
       showToast(`Seasonal spotlight set to ${state.seasonOverride === "auto" ? "Auto" : getActiveSeason().chip}`);
     };
+
+    const defaultViewEl = document.getElementById("settingDefaultViewSelect");
+    if (defaultViewEl) {
+      defaultViewEl.onchange = (e) => {
+        state.defaultView = e.target.value || "epg";
+        localStorage.setItem("onair_default_view", state.defaultView);
+        showToast("Default startup view updated");
+      };
+    }
+
+    const densityEl = document.getElementById("settingDensitySelect");
+    if (densityEl) {
+      densityEl.onchange = (e) => {
+        state.epgDensity = e.target.value || "comfortable";
+        localStorage.setItem("onair_epg_density", state.epgDensity);
+        renderEPG(false);
+        showToast(`EPG row density set to ${state.epgDensity === "compact" ? "Compact" : "Comfortable"}`);
+      };
+    }
+
+    const zoomEl = document.getElementById("settingZoomSelect");
+    if (zoomEl) {
+      zoomEl.onchange = (e) => {
+        state.epgZoom = Number(e.target.value || 4);
+        PIXELS_PER_MIN = state.epgZoom;
+        localStorage.setItem("onair_epg_zoom", String(state.epgZoom));
+        renderEPG(false);
+        showToast("EPG timeline zoom updated");
+      };
+    }
+
+    const hideTeleEl = document.getElementById("settingHideTeleToggle");
+    if (hideTeleEl) {
+      hideTeleEl.onchange = (e) => {
+        state.hideTeleshopping = Boolean(e.target.checked);
+        localStorage.setItem("onair_hide_teleshopping", state.hideTeleshopping ? "1" : "0");
+        renderEPG(false);
+        renderSettings();
+        showToast(state.hideTeleshopping ? "Overnight Teleshopping blocks hidden" : "Teleshopping blocks shown");
+      };
+    }
+
+    const reminderLeadEl = document.getElementById("settingReminderLeadSelect");
+    if (reminderLeadEl) {
+      reminderLeadEl.onchange = (e) => {
+        state.reminderLeadMins = Number(e.target.value || 10);
+        localStorage.setItem("onair_reminder_lead", String(state.reminderLeadMins));
+        showToast(`Reminder alert lead time set to ${state.reminderLeadMins} minutes`);
+      };
+    }
+
+    const testAlertBtn = document.getElementById("testReminderAlertBtn");
+    if (testAlertBtn) {
+      testAlertBtn.onclick = async () => {
+        if ("Notification" in window && Notification.permission === "default") {
+          try {
+            await Notification.requestPermission();
+          } catch (_) {}
+        }
+        if ("Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification("OnAir UK • Reminder Test", {
+              body: `Alerts will fire ${state.reminderLeadMins} minutes before your saved programmes start.`
+            });
+          } catch (_) {}
+        }
+        showToast(`🔔 Test Alert: Notifications active (${state.reminderLeadMins}m before start)`);
+      };
+    }
+
+    const helpFromSettingsBtn = document.getElementById("openHelpGuideFromSettingsBtn");
+    if (helpFromSettingsBtn) {
+      helpFromSettingsBtn.onclick = () => openHelpGuideModal();
+    }
 
     document.getElementById("settingLowDataToggle").onchange = (e) => {
       state.lowDataMode = Boolean(e.target.checked);
@@ -4168,21 +4321,29 @@
       const div = document.createElement("div");
       div.className = `chat-msg ${role}`;
       div.innerHTML = text;
+      const closeChatOnMobile = () => {
+        if (window.innerWidth <= 820 || window.innerHeight <= 540) {
+          panel.classList.add("hidden");
+        }
+      };
       div.querySelectorAll("[data-chat-open-prog]").forEach((link) => {
         link.addEventListener("click", (ev) => {
           ev.preventDefault();
+          closeChatOnMobile();
           openProgrammeModal(link.dataset.chatOpenProg, link.dataset.chatOpenCh);
         });
       });
       div.querySelectorAll("[data-chat-open-stream]").forEach((link) => {
         link.addEventListener("click", (ev) => {
           ev.preventDefault();
+          closeChatOnMobile();
           openStreamModal(link.dataset.chatOpenStream);
         });
       });
       div.querySelectorAll("[data-chat-jump-ch]").forEach((link) => {
         link.addEventListener("click", (ev) => {
           ev.preventDefault();
+          closeChatOnMobile();
           jumpToGuideMatch(link.dataset.chatJumpCh, Number(link.dataset.chatJumpDay || 0), Number(link.dataset.chatJumpMin || 0));
         });
       });
@@ -5198,6 +5359,101 @@
     syncDebugConsoleVisibility();
   }
 
+  function openHelpGuideModal() {
+    if (!el.modalBackdrop || !el.modalBody) return;
+    el.modalBody.innerHTML = `
+      <div class="modal-kicker">
+        <span class="mini-tag">Interactive Help &amp; Quick Guide</span>
+        <span class="mini-tag">UK &amp; Ireland TV + Streaming</span>
+      </div>
+      <h2 id="modalTitle" class="modal-title">Welcome to OnAir UK</h2>
+      <p class="modal-synopsis" style="margin-bottom:14px;">
+        Everything you need to browse live UK &amp; Ireland TV, free FAST channels, historical archives back to 1989, and UK catch-up streaming.
+      </p>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:10px; margin-bottom:16px;">
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">📺 Live TV &amp; 7 Platforms</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Switch between <strong>Freeview, Sky, Virgin, BT/EE, Freesat, Pluto TV &amp; Tubi</strong>. Pick your UK/NI/ROI region in the top bar for local BBC, UTV/STV &amp; RTÉ schedules.
+          </span>
+        </div>
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">🕰️ Time Machine (1989–Today)</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Browse +/- 7 days in the date bar, or click <strong>Time Machine</strong> to jump to any date back to 1989 using BBC Genome, TVMaze &amp; tv24 archives.
+          </span>
+        </div>
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">💬 Ask OnAir Assistant</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Ask natural questions with time clues: <em>"horror movies"</em> (right now), <em>"horror movies this evening"</em>, <em>"when is The Traitors on next?"</em>, or click any show title to open its details.
+          </span>
+        </div>
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">🎄 Normal vs Seasonal Guide</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Use the header toggle to switch between <strong>Normal Guide</strong> (clean everyday view) and <strong>Seasonal Mode</strong> (auto-adapts to Christmas, Winter, Easter, Summer &amp; Halloween).
+          </span>
+        </div>
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">🎬 Shows &amp; Movies Like This</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Every show &amp; film modal includes franchise/spinoff matches (e.g. UK/US/AU/NZ editions), cast/presenter chips, and direct UK catch-up links (BBC iPlayer, ITVX, Channel 4, My5).
+          </span>
+        </div>
+        <div style="padding:12px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-elevated);">
+          <strong style="display:block; font-size:13px; margin-bottom:4px;">📱 Mobile Portrait &amp; Landscape</strong>
+          <span style="font-size:12px; color:var(--text-secondary); line-height:1.45; display:block;">
+            Swipe horizontally &amp; vertically across the EPG grid. In <strong>Settings</strong>, enable <strong>Compact EPG Rows</strong> or adjust <strong>Timeline Zoom</strong> to fit more channels on screen.
+          </span>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-secondary); margin-bottom:16px; font-size:12px; color:var(--text-secondary);">
+        <strong style="color:var(--text-primary); display:block; margin-bottom:6px;">⌨️ Quick Keyboard Shortcuts (Desktop)</strong>
+        <div style="display:flex; flex-wrap:wrap; gap:10px 18px;">
+          <span><code>/</code> Focus Search</span>
+          <span><code>N</code> Jump to Now</span>
+          <span><code>P</code> Jump to Primetime (20:00)</span>
+          <span><code>?</code> Open Help Guide</span>
+          <span><code>Esc</code> Close Modals / Drawers</span>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="helpOpenAssistantBtn" class="btn-primary" type="button">💬 Try Ask OnAir</button>
+        <button id="helpOpenSettingsBtn" class="btn-secondary" type="button">⚙️ Open Settings</button>
+        <button id="helpRunWizardBtn" class="btn-secondary" type="button">✨ Setup Wizard</button>
+      </div>
+    `;
+    el.modalBackdrop.classList.remove("hidden");
+    const tryChat = document.getElementById("helpOpenAssistantBtn");
+    if (tryChat) {
+      tryChat.onclick = () => {
+        closeModal();
+        const panel = document.getElementById("chatPanel");
+        const input = document.getElementById("chatInput");
+        if (panel) panel.classList.remove("hidden");
+        if (input) input.focus();
+      };
+    }
+    const openSet = document.getElementById("helpOpenSettingsBtn");
+    if (openSet) {
+      openSet.onclick = () => {
+        closeModal();
+        switchView("settings");
+      };
+    }
+    const runWiz = document.getElementById("helpRunWizardBtn");
+    if (runWiz) {
+      runWiz.onclick = () => {
+        closeModal();
+        openOnboardingWizard(1);
+      };
+    }
+  }
+
   function init() {
     applyTheme();
     renderPlatformPills();
@@ -5210,6 +5466,23 @@
     renderEPG();
     bindEvents();
     initChatBot();
+
+    const helpBtn = document.getElementById("helpGuideBtn");
+    if (helpBtn) {
+      helpBtn.onclick = () => openHelpGuideModal();
+    }
+    document.addEventListener("keydown", (e) => {
+      const tag = (e.target && e.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable)) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        openHelpGuideModal();
+      }
+    });
+
+    if (state.defaultView && state.defaultView !== "epg") {
+      switchView(state.defaultView);
+    }
 
     // Auto-scroll EPG to current time on load
     requestAnimationFrame(() => scrollEpgToHour("now"));
