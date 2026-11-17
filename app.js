@@ -386,6 +386,103 @@
     return "";
   }
 
+  // Radio Times-style "Pick of the Day / Critic's Choice" star index (What to Watch & What's New)
+  let editorialStarCache = { sig: "", whatsNewSet: new Set(), wtwSet: new Set() };
+  const EDITORIAL_FILLER_RE = /\b(bbc news|itv news|utv live|stv news|channel 4 news|5 news|sky news|weather|breakfast|good morning britain|lorraine|this morning|loose women|teleshopping|shop on tv|ideal world|qvc|nightscreen|this is bbc|cbbc|cbeebies|milkshake|bargain hunt|homes under the hammer|flog it|escape to the country|dickinson's real deal|tipping point|lingo|cash in the attic|doctor's orders)\b/i;
+  const EDITORIAL_FLAGSHIP_SHOW_RE = /\b(the traitors|strictly come dancing|doctor who|blue lights|happy valley|line of duty|slow horses|great british bake off|taskmaster|gavin\s*&\s*stacey|i'm a celebrity|gladiators|race across the world|wolf hall|ludwig|sherwood|peaky blinders|black mirror|the gentlemen|rivals|the day of the jackal|drag race|masterchef|the apprentice|graham norton|late late toy show|match of the day|six nations|nations league|champions league|premier league|world cup|wimbledon|glastonbury|bafta|oscars|eurovision)\b/i;
+  const EDITORIAL_FLAGSHIP_CH_RE = /^(bbc one|bbc two|bbc four|itv1|utv|stv|channel 4|film4|5\b|channel 5|rt[eé]\s*(one|two|1|2)|tg4|virgin media one|sky showcase|sky atlantic|sky cinema|sky sports main)/i;
+
+  function normalizeEditorialTitle(raw = "") {
+    return String(raw || "")
+      .replace(/^(new|live|film|movie):\s*/i, "")
+      .replace(/\s*\((uk|us|ireland|australia|nz|canada|celebrity|uncloaked|unpacked|\d{4}|r)\)\s*$/i, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
+  }
+
+  function getEditorialStarIndex() {
+    const sig = `${liveStreamingItems.length}:${liveFeedItems.length}:${state.dayOffset}:${[...state.interests].join(",")}`;
+    if (editorialStarCache.sig === sig) return editorialStarCache;
+
+    const whatsNewSet = new Set();
+    const wtwSet = new Set();
+
+    // 1. What's New items (live streaming drops + RSS feed titles + new this week catalogue)
+    liveStreamingItems.forEach((item) => {
+      const k = normalizeEditorialTitle(item && item.title);
+      if (k.length >= 3) whatsNewSet.add(k);
+    });
+    liveFeedItems.forEach((item) => {
+      const raw = (item && (item.showTitle || item.title)) || "";
+      const k = normalizeEditorialTitle(raw);
+      if (k.length >= 3) whatsNewSet.add(k);
+      // Extract quoted show titles from RSS headlines (e.g. 'The Traitors' or "Blue Lights")
+      const quoted = String(raw).match(/['"“‘]([^'"”’]{3,45})['"”’]/g) || [];
+      quoted.forEach((q) => {
+        const qk = normalizeEditorialTitle(q.slice(1, -1));
+        if (qk.length >= 4) whatsNewSet.add(qk);
+      });
+    });
+
+    // 2. What to Watch items (curated STREAMING_CATALOGUE thisWeek / 4.5+ stars)
+    if (Array.isArray(STREAMING_CATALOGUE)) {
+      STREAMING_CATALOGUE.forEach((item) => {
+        const k = normalizeEditorialTitle(item && item.title);
+        if (!k) return;
+        if (item.thisWeek) whatsNewSet.add(k);
+        if (item.thisWeek || Number(item.rating || 0) >= 4.5) wtwSet.add(k);
+      });
+    }
+
+    editorialStarCache = { sig, whatsNewSet, wtwSet };
+    return editorialStarCache;
+  }
+
+  function getEditorialStarInfo(prog, ch = null) {
+    if (!prog || !prog.title) return null;
+    const title = String(prog.title || "");
+    if (EDITORIAL_FILLER_RE.test(title) || prog.genre === "News") return null;
+
+    const norm = normalizeEditorialTitle(title);
+    if (!norm || norm.length < 3) return null;
+
+    const { whatsNewSet, wtwSet } = getEditorialStarIndex();
+
+    if (whatsNewSet.has(norm)) {
+      return { starred: true, source: "whats-new", label: "What's New Highlight" };
+    }
+    if (wtwSet.has(norm) || prog.thisWeek) {
+      return { starred: true, source: "what-to-watch", label: "What to Watch Pick" };
+    }
+    if (EDITORIAL_FLAGSHIP_SHOW_RE.test(title)) {
+      return { starred: true, source: "what-to-watch", label: "Critic's Choice Pick" };
+    }
+
+    // Match user's personal What to Watch Interests
+    if (state.interests && state.interests.size > 0 && Array.isArray(prog.interests)) {
+      const matchedInterest = prog.interests.find((tag) => state.interests.has(tag));
+      if (matchedInterest) {
+        return { starred: true, source: "interest", label: `What to Watch • ${matchedInterest}` };
+      }
+    }
+
+    // Primetime flagship Drama / Film / Premiere / Major Sport (Radio Times Pick of the Day criteria)
+    const ratingVal = Number(prog.stars || prog.rating || 0);
+    if (ratingVal >= 4.5) {
+      return { starred: true, source: "what-to-watch", label: "Top Rated Pick" };
+    }
+    if (typeof prog.startMin === "number" && typeof prog.endMin === "number") {
+      const dur = prog.endMin - prog.startMin;
+      const isPrimetime = prog.startMin >= 19 * 60 + 30 && prog.startMin <= 22 * 60 + 15;
+      const isFlagshipCh = ch && EDITORIAL_FLAGSHIP_CH_RE.test(ch.name || "");
+      const isNewBroadcast = getBroadcastStatus(prog) === "New";
+      if (isPrimetime && dur >= 45 && isFlagshipCh && (isNewBroadcast || prog.genre === "Drama" || prog.genre === "Film" || prog.genre === "Sport")) {
+        return { starred: true, source: "what-to-watch", label: "What to Watch Primetime Pick" };
+      }
+    }
+    return null;
+  }
+
   function downloadReminderIcs(title, channelName, isoDate, startMin, endMin, desc = "") {
     const dt = isoDate || getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
     const [y, m, d] = dt.split("-").map(Number);
@@ -882,18 +979,23 @@
                 const isToday = state.dayOffset === 0;
                 const isLive = isToday && nowMin >= p.startMin && nowMin < p.endMin;
                 const isPast = isToday && nowMin >= p.endMin;
+                const starInfo = getEditorialStarInfo(p, ch);
+                const starHtml = starInfo
+                  ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
+                  : "";
 
                 return `
                   <button
-                    class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""}"
+                    class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}"
                     style="left:${left}px; width:${width}px;"
                     data-genre="${p.genre}"
                     data-prog-id="${p.id}"
                     data-channel-id="${ch.id}"
+                    ${starInfo ? `title="★ ${escapeHtml(starInfo.label)} • ${escapeHtml(p.title)}"` : ""}
                     type="button"
                   >
                     <div class="prog-top-row">
-                      <span class="prog-title">${p.title}</span>
+                      <span class="prog-title">${starHtml}${p.title}</span>
                       ${isLive ? `<span class="mini-tag live">LIVE</span>` : getBroadcastStatus(p) === "New" ? `<span class="mini-tag">NEW</span>` : getBroadcastStatus(p) === "Repeat" ? `<span class="mini-tag">R</span>` : ""}
                     </div>
                     <div class="prog-bottom-row">
@@ -1001,6 +1103,9 @@
           ? Math.min(100, Math.max(5, Math.round(((nowMin - current.startMin) / (current.endMin - current.startMin)) * 100)))
           : 0;
 
+        const currentStar = current ? getEditorialStarInfo(current, ch) : null;
+        const nextStar = next ? getEditorialStarInfo(next, ch) : null;
+
         return `
           <article class="nn-card">
             <div class="nn-card-head">
@@ -1016,10 +1121,10 @@
               current
                 ? `<div class="nn-slot is-now" data-prog-id="${current.id}" data-channel-id="${ch.id}">
                     <div class="nn-slot-label">
-                      <span>On Now ${getLiveStreamUrl(ch) ? `&bull; <a href="${getLiveStreamUrl(ch)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#dc2626; font-weight:700; text-decoration:none;">&#9654; Watch Live &nearr;</a>` : ""}</span>
+                      <span>On Now ${currentStar ? `&bull; <span style="color:#f59e0b; font-weight:700;" title="${escapeHtml(currentStar.label)}">&#9733; ${escapeHtml(currentStar.label)}</span>` : ""} ${getLiveStreamUrl(ch) ? `&bull; <a href="${getLiveStreamUrl(ch)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#dc2626; font-weight:700; text-decoration:none;">&#9654; Watch Live &nearr;</a>` : ""}</span>
                       <span>${formatTime(current.startMin)} – ${formatTime(current.endMin)}</span>
                     </div>
-                    <div class="nn-slot-title">${current.title}</div>
+                    <div class="nn-slot-title">${currentStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(currentStar.label)}">&#9733;</span>` : ""}${current.title}</div>
                     <div class="prog-bottom-row">${current.ep} &bull; ${current.genre}</div>
                     <div class="nn-progress-bar"><div class="nn-progress-fill" style="width:${pct}%"></div></div>
                   </div>`
@@ -1030,10 +1135,10 @@
               next
                 ? `<div class="nn-slot" data-prog-id="${next.id}" data-channel-id="${ch.id}">
                     <div class="nn-slot-label">
-                      <span>Up Next</span>
+                      <span>Up Next ${nextStar ? `&bull; <span style="color:#f59e0b; font-weight:700;" title="${escapeHtml(nextStar.label)}">&#9733; Pick</span>` : ""}</span>
                       <span>${formatTime(next.startMin)} – ${formatTime(next.endMin)}</span>
                     </div>
-                    <div class="nn-slot-title">${next.title}</div>
+                    <div class="nn-slot-title">${nextStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(nextStar.label)}">&#9733;</span>` : ""}${next.title}</div>
                     <div class="prog-bottom-row">${next.ep} &bull; ${next.genre}</div>
                   </div>`
                 : ""
@@ -1710,10 +1815,14 @@
 
   function renderStreamCard(item) {
     const saved = isInWatchlist(item.id);
+    const starInfo = getEditorialStarInfo(item, null);
     const season = isSeasonalMode() ? getActiveSeason() : null;
     const seasonalMatch = !!(season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`));
     const seasonalBadge = seasonalMatch
       ? `<span class="mini-tag" style="background:rgba(217,45,32,0.12); color:var(--brand-red); border-color:rgba(217,45,32,0.28); font-weight:700;">${escapeHtml(season.chip)} Pick</span>`
+      : "";
+    const rtBadge = starInfo
+      ? `<span class="mini-tag rt-pick" title="${escapeHtml(starInfo.label)}">&#9733; ${escapeHtml(starInfo.label)}</span>`
       : "";
     const nextBadge = item.nextEpisode && item.nextEpisode.airdate
       ? `<div style="margin-top:6px; font-size:11.5px; font-weight:700; color:var(--accent);">📅 Upcoming: ${escapeHtml(item.nextEpisode.airdate)}${item.nextEpisode.airtime ? ` · ${escapeHtml(item.nextEpisode.airtime)}` : ""}</div>`
@@ -1729,13 +1838,14 @@
             <span class="platform-tag" style="background:${item.platformColor}">${item.platform}</span>
             <span class="star-rating" title="${item.rating} out of 5">${formatStars(item.rating)}</span>
           </div>
-          <h3 class="stream-card-title">${item.title}</h3>
+          <h3 class="stream-card-title">${starInfo ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${item.title}</h3>
           <div class="stream-card-meta">${item.type} &bull; ${item.genre} &bull; ${item.seasons} &bull; ${item.year}</div>
           ${nextBadge}
           <p class="stream-card-desc">${item.desc}</p>
           <div class="stream-card-footer">
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               <span class="mini-tag">Cert ${item.age}</span>
+              ${rtBadge}
               ${seasonalBadge}
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -2443,7 +2553,7 @@
         });
       }
       const modalTitleEl = document.getElementById("modalTitle");
-      if (!modalTitleEl || modalTitleEl.textContent !== rawTitle) return;
+      if (!modalTitleEl || (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) !== rawTitle) return;
       if (resolved.summary) {
         const synEl = el.modalBody && el.modalBody.querySelector(".modal-synopsis");
         if (synEl && (/^Historical broadcast on/i.test(synEl.textContent) || /^Live UK television broadcast/i.test(synEl.textContent))) {
@@ -2801,7 +2911,7 @@
             }).filter(Boolean);
             similarShowSearchCache.set(qKey, mapped);
             const modalTitleEl = document.getElementById("modalTitle");
-            if (mapped.length && modalTitleEl && modalTitleEl.textContent === target.title) {
+            if (mapped.length && modalTitleEl && (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) === target.title) {
               populateModalSimilarSection(target, mapped);
             }
           })
@@ -2843,6 +2953,7 @@
     const nowMin = getNowMinutes();
     const isLive = state.dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
+    const starInfo = getEditorialStarInfo(prog, ch);
 
     el.modalBody.innerHTML = `
       <div id="modalHeaderWrap" class="${prog.image ? "modal-header-with-poster" : ""}">
@@ -2850,12 +2961,13 @@
         <div>
           <div class="modal-kicker">
             <span class="platform-tag" style="background:${ch.color}">${ch.name}${chNum ? ` &bull; Ch ${chNum}` : ""}</span>
+            ${starInfo ? `<span class="mini-tag rt-pick">&#9733; ${escapeHtml(starInfo.label)}</span>` : ""}
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
             ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
             ${getBroadcastStatus(prog) === "New" ? `<span class="mini-tag live">NEW</span>` : getBroadcastStatus(prog) === "Repeat" ? `<span class="mini-tag">REPEAT</span>` : ""}
           </div>
-          <h2 id="modalTitle" class="modal-title">${prog.title}</h2>
+          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}</h2>
           <div class="modal-meta-line">
             <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
             <span>&bull; ${prog.ep}</span>
@@ -2965,18 +3077,20 @@
     if (!item) return;
 
     const saved = isInWatchlist(item.id);
+    const starInfo = getEditorialStarInfo(item, null);
     el.modalBody.innerHTML = `
       <div id="modalHeaderWrap" class="${item.image ? "modal-header-with-poster" : ""}">
         ${item.image ? `<img class="modal-poster" src="${item.image}" alt="${item.title}" />` : ""}
         <div>
           <div class="modal-kicker">
             <span class="platform-tag" style="background:${item.platformColor}">${item.platform}</span>
+            ${starInfo ? `<span class="mini-tag rt-pick">&#9733; ${escapeHtml(starInfo.label)}</span>` : ""}
             <span class="mini-tag">${item.type}</span>
             <span class="mini-tag">${item.genre}</span>
             <span class="mini-tag">Cert ${item.age}</span>
             ${item.isLiveData ? `<span class="mini-tag catchup">LIVE SYNC</span>` : ""}
           </div>
-          <h2 id="modalTitle" class="modal-title">${item.title}</h2>
+          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(item.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${item.title}</h2>
           <div class="modal-meta-line">
             <span class="star-rating">${formatStars(item.rating)}</span>
             <span>&bull; ${item.seasons}</span>
@@ -5309,7 +5423,8 @@
     const brokenPlatforms = [];
     if (typeof WATCH_PLATFORMS === "object" && WATCH_PLATFORMS) {
       Object.entries(WATCH_PLATFORMS).forEach(([name, cfg]) => {
-        if (!cfg || !cfg.url || !/^https?:\/\//i.test(cfg.url)) {
+        const testUrl = cfg && (typeof cfg.url === "function" ? cfg.url("test") : cfg.url);
+        if (!testUrl || !/^https?:\/\//i.test(testUrl)) {
           brokenPlatforms.push(name);
         }
       });

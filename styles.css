@@ -3309,3 +3309,34 @@ select {
   background: rgba(56, 189, 248, 0.16);
   color: #38bdf8;
 }
+
+/* Radio Times-style Critic's Choice / What to Watch & What's New Star */
+.rt-pick-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f59e0b;
+  font-size: 12px;
+  line-height: 1;
+  margin-right: 4px;
+  flex-shrink: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.epg-prog.is-rt-pick {
+  border-left: 3px solid #f59e0b !important;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.10) 0%, var(--bg-surface-alt) 55%);
+}
+
+.mini-tag.rt-pick {
+  background: rgba(245, 158, 11, 0.16);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  font-weight: 700;
+}
+
+[data-theme="dark"] .mini-tag.rt-pick {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+}
