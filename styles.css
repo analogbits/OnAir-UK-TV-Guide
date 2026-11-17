@@ -2810,3 +2810,40 @@ select {
   color: #fbbf24;
   border-color: rgba(251, 191, 36, 0.45);
 }
+
+/* Desktop-Only Hover Over Reveals Full Programme & Channel Name */
+@media (hover: hover) and (pointer: fine) and (min-width: 769px) {
+  body.hover-reveal-enabled .epg-prog:hover {
+    width: max-content !important;
+    min-width: var(--prog-w, 80px) !important;
+    max-width: 460px !important;
+    z-index: 24 !important;
+    background: var(--bg-elevated) !important;
+    box-shadow: var(--shadow-lg) !important;
+    border-color: var(--brand-red) !important;
+    padding-right: 14px;
+  }
+
+  body.hover-reveal-enabled .epg-prog:hover .prog-title,
+  body.hover-reveal-enabled .epg-prog:hover .prog-bottom-row {
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  body.hover-reveal-enabled .epg-channel-cell:hover {
+    z-index: 26;
+    width: max-content;
+    min-width: var(--epg-channel-col);
+    max-width: 340px;
+    box-shadow: var(--shadow-md);
+  }
+
+  body.hover-reveal-enabled .epg-channel-cell:hover .channel-name,
+  body.hover-reveal-enabled .epg-channel-cell:hover .channel-hd {
+    -webkit-line-clamp: unset;
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+  }
+}

@@ -66,6 +66,7 @@
     epgDensity: localStorage.getItem("onair_epg_density") || "comfortable",
     epgZoom: Number(localStorage.getItem("onair_epg_zoom") || 4),
     hideTeleshopping: localStorage.getItem("onair_hide_teleshopping") === "1",
+    hoverRevealNames: localStorage.getItem("onair_hover_reveal") !== "0",
     reminderLeadMins: Number(localStorage.getItem("onair_reminder_lead") || 10)
   };
   let timeMachineEpg = null;
@@ -939,6 +940,7 @@
       });
     }
     PIXELS_PER_MIN = Number(state.epgZoom || 4);
+    document.body.classList.toggle("hover-reveal-enabled", Boolean(state.hoverRevealNames));
     if (el.epgGrid) {
       el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
     }
@@ -986,14 +988,16 @@
                   ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
                   : "";
 
+                const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
+
                 return `
                   <button
                     class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}"
-                    style="left:${left}px; width:${width}px;"
+                    style="left:${left}px; width:${width}px; --prog-w:${width}px;"
                     data-genre="${p.genre}"
                     data-prog-id="${p.id}"
                     data-channel-id="${ch.id}"
-                    ${starInfo ? `title="★ ${escapeHtml(starInfo.label)} • ${escapeHtml(p.title)}"` : ""}
+                    title="${escapeHtml(hoverTitle)}"
                     type="button"
                   >
                     <div class="prog-top-row">
@@ -3807,6 +3811,17 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>Hover Over Reveals Full Name (Desktop Only)</strong>
+            <span>Expands truncated programme &amp; channel titles on mouse hover in the TV Guide (automatically disabled on mobile &amp; touch screens).</span>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
+            <input id="settingHoverRevealToggle" type="checkbox" ${state.hoverRevealNames ? "checked" : ""} />
+            ${state.hoverRevealNames ? "Enabled" : "Off"}
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Hide Teleshopping &amp; Paid Programming</strong>
             <span>Automatically hides overnight Teleshopping / Shop on TV blocks in the EPG grid.</span>
           </div>
@@ -4050,6 +4065,17 @@
         if (state.view === "epg") renderEPG(false);
         window.scrollTo({ left: 0, behavior: "instant" });
         showToast("EPG timeline zoom updated");
+      };
+    }
+
+    const hoverRevealEl = document.getElementById("settingHoverRevealToggle");
+    if (hoverRevealEl) {
+      hoverRevealEl.onchange = (e) => {
+        state.hoverRevealNames = Boolean(e.target.checked);
+        localStorage.setItem("onair_hover_reveal", state.hoverRevealNames ? "1" : "0");
+        document.body.classList.toggle("hover-reveal-enabled", state.hoverRevealNames);
+        renderSettings();
+        showToast(state.hoverRevealNames ? "Desktop hover-to-reveal full names enabled" : "Desktop hover-to-reveal disabled");
       };
     }
 
