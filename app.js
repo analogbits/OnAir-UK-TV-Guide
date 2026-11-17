@@ -501,7 +501,6 @@
     syncGuideModeUI();
     renderWhatToWatch();
     renderStreaming();
-    if (state.view === "epg") renderEPG(false);
     if (el.tmPopover && !el.tmPopover.classList.contains("hidden") && el.timeMachineBtn) {
       el.timeMachineBtn.click();
       el.timeMachineBtn.click();
