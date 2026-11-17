@@ -379,26 +379,46 @@
 
   const LIVE_FIRST_RUN_RE = /^(live:|breakfast|morning live|good morning britain|lorraine|this morning|loose women|politics live|jeremy vine|sunday with laura kuenssberg|the one show|newsnight|channel 4 news|itv news|itv lunchtime news|itv evening news|bbc news|utv live|stv news|newsline|weather|nations league|match of the day live|six nations live)\b/i;
   const REPEAT_ARCHIVE_CH_RE = /\b(dave|gold|u&drama|u&yesterday|u&w|u&alibi|itv2|itv3|itv4|bbc three|bbc four|more4|e4|4seven|5usa|5star|5select|challenge|sky replay|sky mix|sky comedy|sky max|sky witness|sky sci-fi|legend|talkingpictures|quest|really|dmax|blaze|comedy central)\b/i;
-  const SYNDICATED_REPEAT_SHOW_RE = /\b(frasier|friends|cheers|everybody loves raymond|king of queens|seinfeld|the big bang theory|young sheldon|two and a half men|modern family|brooklyn nine-nine|the office|parks and recreation|scrubs|futurama|the simpsons|family guy|american dad|bob's burgers|south park|midsomer murders|poirot|agata christie's poirot|miss marple|marple|vera|lewis|endeavour|inspector morse|a touch of frost|heartbeat|the royal|where the heart is|classic emmerdale|classic coronation street|doctors|holby city|casualty|father brown|sister boniface|death in paradise|beyond paradise|shakespeare & hathaway|mcdonald & dodds|new tricks|silent witness|waking the dead|spooks|hustle|life on mars|ashes to ashes|doc martin|all creatures great and small|call the midwife|downton abbey|gavin & stacey|peep show|the inbetweeners|friday night dinner|my family|keeping up appearances|one foot in the grave|only fools and horses|fawlty towers|blackadder|vicar of dibley|dinnerladies|royale family|mrs brown's boys|not going out|would i lie to you|qi\b|8 out of 10 cats|taskmaster|mock the week|live at the apollo|bargain hunt|homes under the hammer|escape to the country|antiques roadshow|vintage antiques roadshow|flog it|the repair shop|pointless|impossible|bridge of lies|house of games|the chase|tipping point|lingo|deal or no deal|dickinson's real deal|catchphrase|wheel of fortune|bulls-eye|blankety blank|family fortunes|come dine with me|four in a bed|a place in the sun|location, location, location|grand designs|george clarke|countryfile|coast|great british railway journeys|great coastal railway journeys|scam interceptors|doorbell detectives|dashcam justice|police interceptors|traffic cops|road wars|nothing to declare|border security|bondi rescue|24 hours in a&e|24 hours in police custody|ambulance|999: on the front line|the dog house)\b/i;
+  // Classic/syndicated series that are always repeats unless explicitly tagged "New:"
+  const CLASSIC_SYNDICATED_REPEAT_RE = /\b(frasier|friends|cheers|everybody loves raymond|king of queens|seinfeld|the big bang theory|young sheldon|two and a half men|modern family|brooklyn nine-nine|the office|parks and recreation|scrubs|futurama|the simpsons|family guy|american dad|bob's burgers|south park|midsomer murders|poirot|agatha christie's poirot|miss marple|marple|vera|lewis|endeavour|inspector morse|a touch of frost|heartbeat|the royal|where the heart is|classic emmerdale|classic coronation street|doctors|holby city|father brown|sister boniface|death in paradise|shakespeare & hathaway|mcdonald & dodds|new tricks|waking the dead|spooks|hustle|life on mars|ashes to ashes|doc martin|downton abbey|gavin & stacey|peep show|the inbetweeners|friday night dinner|my family|keeping up appearances|one foot in the grave|only fools and horses|fawlty towers|blackadder|vicar of dibley|dinnerladies|royale family|mrs brown's boys|not going out|vintage antiques roadshow|flog it|dickinson's real deal|bulls-eye|blankety blank|nothing to declare|border security|bondi rescue|police interceptors|traffic cops|road wars)\b/i;
+  // Daytime/quiz/lifestyle series that air first-run episodes in daytime on main channels, but repeat overnight (00:00–08:55) or on secondary channels
+  const DAYTIME_OVERNIGHT_REPEAT_RE = /\b(bargain hunt|homes under the hammer|escape to the country|antiques roadshow|the repair shop|pointless|impossible|bridge of lies|only connect|house of games|the chase|tipping point|lingo|deal or no deal|catchphrase|wheel of fortune|family fortunes|come dine with me|couples come dine with me|four in a bed|a place in the sun|location, location, location|grand designs|countryfile|coast|great british railway journeys|great coastal railway journeys|scam interceptors|doorbell detectives|dashcam justice|24 hours in a&e|24 hours in police custody|ambulance|the dog house|live at the apollo|would i lie to you|qi\b|8 out of 10 cats|taskmaster|mock the week)\b/i;
+
+  function formatShortAirDate(isoStr) {
+    if (!isoStr || !/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) return "";
+    try {
+      const d = new Date(`${isoStr}T12:00:00Z`);
+      return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return isoStr;
+    }
+  }
 
   function getBroadcastStatus(prog, ch = null) {
     if (!prog) return "";
     const title = String(prog.title || "").trim();
     const desc = String(prog.desc || "").trim();
-    const ep = String(prog.ep || "").trim();
     const chName = ch && ch.name ? String(ch.name) : "";
 
-    // 1. Explicit New markers in title or synopsis
+    // 1. Explicit New markers in title, synopsis, or TVMaze/Sky flags
     if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
       return "New";
     }
+    if (prog.isNew && !prog.isRepeat) {
+      return "New";
+    }
 
-    // 2. Explicit Repeat markers in title, synopsis or flags
-    if (prog.isRepeat || /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b|\boriginally broadcast\b/i.test(`${title} ${desc}`)) {
+    // 2. Authoritative Repeat flag from Freeview UK (start_of_availability < broadcast date), TVMaze UK, or explicit (R)
+    if (prog.isRepeat || prog.firstShown || /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b|\boriginally broadcast\b/i.test(`${title} ${desc}`)) {
       return "Repeat";
     }
 
-    // 3. Live news, weather, live sport & live daytime magazine shows are never repeats
+    // 3. Authoritative First-Run flag from Freeview UK (start_of_availability === broadcast date)
+    if (prog.isFirstRunToday) {
+      return "";
+    }
+
+    // 4. Live news, weather, live sport & live daytime magazine shows are never repeats
     if (
       LIVE_FIRST_RUN_RE.test(title) ||
       prog.genre === "News" ||
@@ -407,22 +427,27 @@
       return "";
     }
 
-    // 4. Repeat/Archive channels (ITV3, Dave, Gold, More4, E4, Sky Mix, Sky Comedy, etc.) when not explicitly New:
+    // 5. Repeat/Archive channels (ITV3, Dave, Gold, More4, E4, Sky Mix, Sky Comedy, etc.) when not explicitly New:
     if (chName && REPEAT_ARCHIVE_CH_RE.test(chName) && prog.genre !== "Film") {
       return "Repeat";
     }
 
-    // 5. Known syndicated/daytime repeat series or daytime/overnight episodic airings without "New:"
-    const hasEpisodeNum = /\b(series\s*\d+|season\s*\d+|ep(isode)?\s*\d+|\d+\/\d+\.)/i.test(`${ep} ${desc}`);
-    const isDaytimeOrLate = typeof prog.startMin === "number" && (prog.startMin < 17 * 60 + 30 || prog.startMin >= 22 * 60 + 30);
-    if (SYNDICATED_REPEAT_SHOW_RE.test(title)) {
-      if (isDaytimeOrLate || !prog.isNew) return "Repeat";
-    }
-    if (hasEpisodeNum && isDaytimeOrLate && !prog.isNew) {
+    // 6. Classic/syndicated series are repeats unless marked New:
+    if (CLASSIC_SYNDICATED_REPEAT_RE.test(title)) {
       return "Repeat";
     }
 
-    if (prog.isNew) return "New";
+    // 7. Daytime/quiz/panel series when aired in overnight/early-morning slots (00:00–08:55) or late night (22:35–24:00)
+    if (DAYTIME_OVERNIGHT_REPEAT_RE.test(title) && typeof prog.startMin === "number") {
+      if (prog.startMin < 9 * 60 || prog.startMin >= 22 * 60 + 35) {
+        return "Repeat";
+      }
+      // On BBC Two in daytime (06:00–17:30), quizzes/antiques like Impossible, Only Connect, Flog It, Bargain Hunt are repeats
+      if (/\bbbc two\b/i.test(chName) && prog.startMin < 17 * 60 + 30) {
+        return "Repeat";
+      }
+    }
+
     return "";
   }
 
@@ -3063,13 +3088,13 @@
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
             ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
-            ${bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat showing">REPEAT (R)</span>` : ""}
+            <span id="modalKickerStatusBadge">${bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat showing">REPEAT (R)</span>` : ""}</span>
           </div>
           <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
           <div class="modal-meta-line">
-            <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.startMin < prog.endMin ? prog.endMin : prog.endMin)}</strong></span>
+            <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
             <span>&bull; ${prog.ep}</span>
-            <span>&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? "🔁 Repeat (R)" : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
+            <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown ? ` · First shown ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
             ${prog.stars ? `<span class="star-rating">&bull; ${formatStars(prog.stars)}</span>` : ""}
           </div>
         </div>
@@ -3112,6 +3137,38 @@
     });
 
     const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+
+    // Live TVMaze episode airdate verification for exact Repeat / First-Aired date when Series & Ep are present
+    const seMatch = String(prog.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
+    const sNum = prog.seasonNumber || (seMatch ? Number(seMatch[1]) : null);
+    const eNum = prog.episodeNumber || (seMatch ? Number(seMatch[2]) : null);
+    if (sNum && eNum && !prog.firstShown) {
+      const cleanQ = String(prog.title || "").replace(/^(?:New|Live|Film):\s*/i, "").trim();
+      fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanQ)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((sh) => (sh && sh.id ? fetch(`https://api.tvmaze.com/shows/${sh.id}/episodebynumber?season=${sNum}&number=${eNum}`) : null))
+        .then((r) => (r && r.ok ? r.json() : null))
+        .then((epData) => {
+          if (!epData || !epData.airdate) return;
+          const modalTitleEl = document.getElementById("modalTitle");
+          if (!modalTitleEl || (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) !== prog.title) return;
+          if (epData.airdate < activeIsoDate) {
+            prog.firstShown = epData.airdate;
+            prog.isRepeat = true;
+            const stEl = document.getElementById("modalBroadcastStatus");
+            if (stEl) {
+              stEl.innerHTML = `&bull; <strong>🔁 Repeat (R) · First aired ${escapeHtml(formatShortAirDate(epData.airdate))}</strong>`;
+            }
+            const kbEl = document.getElementById("modalKickerStatusBadge");
+            if (kbEl && !prog.isNew) {
+              kbEl.innerHTML = `<span class="mini-tag repeat-tag" title="First aired ${escapeHtml(epData.airdate)}">REPEAT (R)</span>`;
+            }
+          } else if (epData.airdate === activeIsoDate && !prog.isRepeat) {
+            prog.isFirstRunToday = true;
+          }
+        })
+        .catch(() => {});
+    }
 
     document.getElementById("modalWatchlistBtn").onclick = () => {
       toggleWatchlist({
@@ -5995,6 +6052,24 @@
     if (!localStorage.getItem("onair_onboarded_v1")) {
       openOnboardingWizard(1);
     }
+
+    window.addEventListener("onair:epg-meta-updated", (ev) => {
+      const dOff = ev && ev.detail && typeof ev.detail.dayOffset === "number" ? ev.detail.dayOffset : state.dayOffset;
+      const dateStr = getSkyDateStrForOffset(dOff);
+      const localCache = getCachedStoreForSearch();
+      const epgDay = localCache && localCache[`epg_${dateStr}`];
+      if (epgDay) {
+        const currentMap = liveEpgByDay.get(dOff) || {};
+        Object.entries(epgDay).forEach(([sid, entry]) => {
+          if (entry && Array.isArray(entry.events)) {
+            currentMap[sid] = entry.events;
+          }
+        });
+        liveEpgByDay.set(dOff, currentMap);
+        if (state.view === "epg" && state.dayOffset === dOff) renderEPG(false);
+        else if (state.view === "now-next" && dOff === 0) renderNowNext(false);
+      }
+    });
 
     // Initial load uses persistent Show Vault & cached streaming/RSS (zero redundant API calls)
     syncLiveData(false);

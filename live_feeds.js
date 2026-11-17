@@ -93,26 +93,132 @@ const ONAIR_LIVE = (() => {
   }
 
   async function fetchTvmazeUkMap(isoDate, cache) {
-    const cacheKey = `tvmaze_gb_${isoDate}`;
+    const cacheKey = `tvmaze_gb_v2_${isoDate}`;
     if (cache[cacheKey] && Date.now() - cache[cacheKey].ts < CACHE_TTL_MS * 8) {
       return cache[cacheKey].map || {};
     }
     try {
       const list = await fetchJson(`https://api.tvmaze.com/schedule?country=GB&date=${isoDate}`);
-      const map = {};
+      const map = { __firstRun: {} };
       (Array.isArray(list) ? list : []).forEach((ep) => {
         const show = ep && ep.show;
         if (!show || !show.name) return;
+        const key = normalizeTitleKey(show.name);
+        if (!key) return;
         const cat = mapTvmazeShowToCategory(show);
         if (cat) {
-          map[normalizeTitleKey(show.name)] = cat;
+          map[key] = cat;
         }
+        const parts = String(ep.airtime || "").split(":");
+        const min = parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : null;
+        if (!map.__firstRun[key]) map.__firstRun[key] = [];
+        map.__firstRun[key].push({
+          season: ep.season || null,
+          number: ep.number || null,
+          min
+        });
       });
       cache[cacheKey] = { ts: Date.now(), map };
       saveCache(cache);
       return map;
     } catch {
-      return {};
+      return { __firstRun: {} };
+    }
+  }
+
+  const inFlightFvMeta = new Set();
+
+  async function fetchFreeviewBroadcastMeta(isoDate, dateStr, dayStartSec, cache, dayOffset) {
+    const metaKey = `fv_bmeta_${dateStr}`;
+    if (cache[metaKey] && Date.now() - cache[metaKey].ts < CACHE_TTL_MS * 12) {
+      return cache[metaKey].byTitleMin || null;
+    }
+    if (inFlightFvMeta.has(dateStr)) return null;
+    inFlightFvMeta.add(dateStr);
+    try {
+      const fvUrl = `https://www.freeview.co.uk/api/tv-guide?nid=64257&start=${dayStartSec}`;
+      let fvPrograms = null;
+      for (const proxyUrl of buildProxyUrls(fvUrl, false)) {
+        try {
+          const r = await fetchJson(proxyUrl, 6500);
+          if (r && r.data && Array.isArray(r.data.programs)) {
+            fvPrograms = r.data.programs;
+            break;
+          }
+        } catch {
+          // try next proxy
+        }
+      }
+      if (!fvPrograms) return null;
+
+      const byTitleMin = {};
+      fvPrograms.forEach((chObj) => {
+        if (!Array.isArray(chObj.events)) return;
+        chObj.events.forEach((ev) => {
+          const rawTitle = ev.main_title || ev.t || "";
+          const tKey = normalizeTitleKey(rawTitle.replace(/^(?:New|Live):\s*/i, ""));
+          if (!tKey) return;
+          const stSec = typeof ev.st === "number" ? ev.st : Math.floor(new Date(ev.start_time).getTime() / 1000);
+          const startMin = Math.max(0, Math.floor((stSec - dayStartSec) / 60));
+          const bucketMin = Math.round(startMin / 5) * 5;
+          const availIso = ((ev.on_demand && ev.on_demand.start_of_availability) || "").slice(0, 10);
+          const sec = String(ev.secondary_title || "");
+          let isRepeat = false;
+          let isFirstRun = false;
+          let firstShown = null;
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(availIso)) {
+            if (availIso < isoDate) {
+              isRepeat = true;
+              firstShown = availIso;
+            } else if (availIso === isoDate) {
+              isFirstRun = true;
+            }
+          }
+          if (!isRepeat && !isFirstRun && /^New:\s*/i.test(rawTitle)) {
+            isFirstRun = true;
+          }
+          if (isRepeat || isFirstRun || firstShown) {
+            byTitleMin[`${tKey}|${bucketMin}`] = { isRepeat, isFirstRun, firstShown };
+          }
+        });
+      });
+
+      cache[metaKey] = { ts: Date.now(), byTitleMin };
+      const dayCache = cache[`epg_${dateStr}`];
+      if (dayCache) {
+        let updated = 0;
+        Object.values(dayCache).forEach((entry) => {
+          if (!entry || !Array.isArray(entry.events)) return;
+          entry.events.forEach((ev) => {
+            const tKey = normalizeTitleKey((ev.title || "").replace(/^(?:New|Live):\s*/i, ""));
+            const bMin = Math.round((ev.startMin || 0) / 5) * 5;
+            const hit = byTitleMin[`${tKey}|${bMin}`] || byTitleMin[`${tKey}|${bMin - 5}`] || byTitleMin[`${tKey}|${bMin + 5}`];
+            if (hit) {
+              if (hit.isRepeat && !ev.isNew) {
+                ev.isRepeat = true;
+                ev.isFirstRunToday = false;
+                if (hit.firstShown) ev.firstShown = hit.firstShown;
+                updated++;
+              } else if (hit.isFirstRun) {
+                ev.isFirstRunToday = true;
+                ev.isRepeat = false;
+                updated++;
+              }
+            }
+          });
+        });
+        saveCache(cache);
+        if (updated > 0 && typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+          logDebug("Freeview Meta", `Synced ${updated} official Repeat/First-Run flags for ${isoDate}`, "ok");
+          window.dispatchEvent(new CustomEvent("onair:epg-meta-updated", { detail: { dayOffset, dateStr } }));
+        }
+      }
+      return byTitleMin;
+    } catch {
+      return null;
+    } finally {
+      inFlightFvMeta.delete(dateStr);
     }
   }
 
@@ -1472,11 +1578,16 @@ const ONAIR_LIVE = (() => {
       const vault = loadVault();
       let vaultDirty = false;
       const gotSids = new Set();
+      const fvMetaCached = cache[`fv_bmeta_${dateStr}`] && cache[`fv_bmeta_${dateStr}`].byTitleMin
+        ? cache[`fv_bmeta_${dateStr}`].byTitleMin
+        : null;
+      const tvmFirstRun = (tvmazeMap && tvmazeMap.__firstRun) || {};
 
       responses.forEach((resp) => {
         (resp.schedule || []).forEach((chSched) => {
           const sid = chSched.sid;
           const chCat = chCatBySid.get(String(sid)) || null;
+          const seenChannelEpisodes = new Set();
           const mappedEvents = (chSched.events || [])
             .map((ev) => {
               const startMin = Math.floor((ev.st - dayStartSec) / 60);
@@ -1510,9 +1621,50 @@ const ONAIR_LIVE = (() => {
                   ? `Episode ${ev.episodenumber}`
                   : genre;
 
-              const isExplicitNew = Boolean(ev.new) || /^New:\s*/i.test(rawTitle) || /\b(brand[- ]new|new series|series premiere)\b/i.test(ev.sy || "");
-              const isRepeat = !isExplicitNew && (
-                Boolean(ev.repeat || ev.r_flag) ||
+              // 1. Check TVMaze UK official first-run schedule for this date (matches exact S/E or airtime)
+              const tvmSlots = titleKey ? tvmFirstRun[titleKey] : null;
+              let tvmMatchedNew = false;
+              let tvmOtherEpToday = false;
+              if (Array.isArray(tvmSlots) && tvmSlots.length) {
+                tvmSlots.forEach((slot) => {
+                  if (ev.seasonnumber && ev.episodenumber && slot.season && slot.number) {
+                    if (Number(ev.seasonnumber) === Number(slot.season) && Number(ev.episodenumber) === Number(slot.number)) {
+                      if (slot.min === null || Math.abs(clampedStart - slot.min) <= 90 || slot.min <= 360) {
+                        tvmMatchedNew = true;
+                      }
+                    } else {
+                      tvmOtherEpToday = true;
+                    }
+                  } else if (slot.min !== null && Math.abs(clampedStart - slot.min) <= 45) {
+                    tvmMatchedNew = true;
+                  }
+                });
+              }
+
+              // 2. Check Freeview UK official start_of_availability metadata if cached
+              const bMin = Math.round(clampedStart / 5) * 5;
+              const fvHit = fvMetaCached && titleKey
+                ? (fvMetaCached[`${titleKey}|${bMin}`] || fvMetaCached[`${titleKey}|${bMin - 5}`] || fvMetaCached[`${titleKey}|${bMin + 5}`])
+                : null;
+
+              // 3. Same-channel same-day earlier airing check (e.g. 03:25 & 23:00 repeat)
+              const epSig = ev.programmeuuid || (ev.seasonnumber && ev.episodenumber ? `${titleKey}|s${ev.seasonnumber}e${ev.episodenumber}` : null);
+              const isSameDayChannelRepeat = Boolean(epSig && seenChannelEpisodes.has(epSig));
+              if (epSig) seenChannelEpisodes.add(epSig);
+
+              const isExplicitNew =
+                Boolean(ev.new) ||
+                /^New:\s*/i.test(rawTitle) ||
+                /\b(brand[- ]new|new series|series premiere)\b/i.test(ev.sy || "") ||
+                (tvmMatchedNew && !(fvHit && fvHit.isRepeat) && !isSameDayChannelRepeat);
+
+              const isFirstRunToday = Boolean(isExplicitNew || (fvHit && fvHit.isFirstRun));
+              const isRepeat = !isExplicitNew && !isFirstRunToday && Boolean(
+                ev.repeat ||
+                ev.r_flag ||
+                (fvHit && fvHit.isRepeat) ||
+                tvmOtherEpToday ||
+                isSameDayChannelRepeat ||
                 /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b/i.test(ev.sy || "") ||
                 /\(R\)|\brepeat\b/i.test(rawTitle)
               );
@@ -1529,8 +1681,12 @@ const ONAIR_LIVE = (() => {
                 desc: ev.sy || "Live UK television broadcast.",
                 cast: genre,
                 stars: null,
+                seasonNumber: ev.seasonnumber || null,
+                episodeNumber: ev.episodenumber || null,
                 isNew: isExplicitNew,
+                isFirstRunToday,
                 isRepeat,
+                firstShown: (fvHit && fvHit.firstShown) || null,
                 isLiveData: true,
                 thisWeek: isExplicitNew,
                 interests: inferInterestsFromEvent(rawTitle, ev.sy || "", genre),
@@ -1745,6 +1901,9 @@ const ONAIR_LIVE = (() => {
 
       cache[`epg_${dateStr}`] = dayCache;
       saveCache(cache);
+      if (!cache[`fv_bmeta_${dateStr}`]) {
+        fetchFreeviewBroadcastMeta(isoDate, dateStr, dayStartSec, cache, dayOffset).catch(() => {});
+      }
     } finally {
       toFetch.forEach((sid) => inFlightSids.delete(`${dateStr}-${sid}`));
     }
