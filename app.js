@@ -4184,23 +4184,78 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    function getLiveSummaryFor(platId, catId, dayOffset = 0, limit = 3) {
+    function getSmartPicks({ regex = null, catId = null, platId = null, onlyFilms = false, preferTonight = false, dayOffset = 0, limit = 5 } = {}) {
       const nowMin = getNowMinutes();
       const localCache = getCachedStoreForSearch();
-      const chs = liveChannels.filter((c) => c.numbers[platId] != null);
-      const picks = [];
+      const targetPlat = platId || state.platform;
+      const chs = platId
+        ? liveChannels.filter((c) => c.numbers[platId] != null)
+        : [
+            ...liveChannels.filter((c) => c.numbers[targetPlat] != null),
+            ...liveChannels.filter((c) => c.numbers[targetPlat] == null)
+          ];
+      const skipRe = /\b(teleshopping|programmes start at|this is bbc|shop on tv|must have ideas|ideal world|high street - shopping|unwind with itv|alba today)\b/i;
+      const tvCandidates = [];
+      const seenTitles = new Set();
+
       for (const ch of chs) {
         const progs = getDayScheduleForSearch(ch, dayOffset, localCache);
-        if (!progs) continue;
-        const target = dayOffset === 0
-          ? progs.find((p) => nowMin >= p.startMin && nowMin < p.endMin) || progs.find((p) => p.startMin > nowMin)
-          : progs.find((p) => p.startMin >= 18 * 60) || progs[0];
-        if (!target) continue;
-        if (catId && catId !== "All" && !progMatchesCategory(target, catId, ch.name)) continue;
-        picks.push({ ch, prog: target });
-        if (picks.length >= limit) break;
+        if (!Array.isArray(progs) || !progs.length) continue;
+        for (const p of progs) {
+          if (!p || !p.title || skipRe.test(p.title)) continue;
+          if (dayOffset === 0 && p.endMin <= nowMin) continue;
+          const isFilm = p.genre === "Film" || /^film:/i.test(p.title) || /\b(film|movie|cinema|sky (premiere|greats|family|action|comedy|thriller|drama|christmas|scfi)|film4|talkingpictures|great!\s*(movies|christmas|action|mystery)|pluto tv (movies|cult|horror|thrillers|westerns|action|christmas))\b/i.test(ch.name);
+          if (onlyFilms && !isFilm) continue;
+          const hay = `${p.title} ${p.desc || ""} ${p.genre || ""} ${ch.name}`;
+          if (regex && !regex.test(hay)) continue;
+          if (!regex && catId && catId !== "All" && !progMatchesCategory(p, catId, ch.name)) continue;
+
+          const cleanKey = p.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (seenTitles.has(cleanKey)) continue;
+          seenTitles.add(cleanKey);
+
+          const isOnNow = dayOffset === 0 && nowMin >= p.startMin && nowMin < p.endMin;
+          const isPrime = p.startMin >= 19 * 60 && p.startMin <= 22 * 60 + 30;
+          let score = 0;
+          if (preferTonight && isPrime) score += 50;
+          else if (!preferTonight && isOnNow) score += 50;
+          else if (p.startMin > nowMin && p.startMin <= nowMin + 180) score += 35;
+          else if (isPrime) score += 25;
+          if (cHasPlatform(ch, targetPlat)) score += 15;
+          if (p.isNew || /^New:/i.test(p.title)) score += 12;
+          if (isFilm && onlyFilms) score += 15;
+
+          tvCandidates.push({ ch, prog: p, dayOffset, isOnNow, score });
+        }
       }
-      return picks;
+
+      tvCandidates.sort((a, b) => b.score - a.score || a.prog.startMin - b.prog.startMin);
+
+      const streamCandidates = [];
+      getMergedCatalogue().forEach((item) => {
+        if (onlyFilms && item.type !== "Films") return;
+        const hay = `${item.title} ${item.desc || ""} ${item.genre || ""} ${item.type || ""} ${(item.interests || []).join(" ")}`;
+        if (regex && !regex.test(hay)) return;
+        if (!regex && catId && catId !== "All" && catId !== "Film" && item.genre !== catId) return;
+        const cleanKey = item.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (seenTitles.has(cleanKey)) return;
+        seenTitles.add(cleanKey);
+        streamCandidates.push(item);
+      });
+
+      return {
+        tv: tvCandidates.slice(0, limit),
+        stream: streamCandidates.slice(0, 3)
+      };
+    }
+
+    function cHasPlatform(ch, platId) {
+      return Boolean(ch && ch.numbers && ch.numbers[platId] != null);
+    }
+
+    function formatPickLine(x) {
+      const tag = x.isOnNow ? `<span style="color:#ef4444;font-weight:700;">LIVE</span>` : formatTime(x.prog.startMin);
+      return `&bull; <strong>${escapeHtml(x.ch.name)}</strong>: ${escapeHtml(x.prog.title)} (${tag})`;
     }
 
     async function handleQuery(raw) {
@@ -4296,20 +4351,58 @@
 
       // 1. Detect platform intent
       const platMap = [
-        { re: /\bpluto\b/i, id: "pluto", name: "Pluto TV" },
+        { re: /\bpluto(\s+tv)?\b/i, id: "pluto", name: "Pluto TV" },
         { re: /\btubi\b/i, id: "tubi", name: "Tubi" },
         { re: /\bsky\b/i, id: "sky", name: "Sky" },
         { re: /\bfreeview\b/i, id: "freeview", name: "Freeview" },
-        { re: /\bvirgin\b/i, id: "virgin", name: "Virgin Media" },
+        { re: /\bvirgin(\s+media)?\b/i, id: "virgin", name: "Virgin Media" },
         { re: /\b(bt|ee tv|ee)\b/i, id: "bt", name: "BT / EE TV" },
         { re: /\bfreesat\b/i, id: "freesat", name: "Freesat" }
       ];
       const matchedPlat = platMap.find((p) => p.re.test(lower));
 
-      // 2. Detect category intent
+      // 2. Detect specific season/holiday or genre/topic intent
+      const wantsFilmsOnly = /\b(film|films|movie|movies|cinema)\b/i.test(lower);
+      const wantsTonight = /\b(tonight|evening|primetime|later)\b/i.test(lower);
+      const explicitSeason = SEASON_CALENDAR.find((s) => new RegExp(`\\b(${s.id}|${s.searchQuery}|${s.id === "christmas" ? "xmas|festive|santa" : s.id === "halloween" ? "spooky" : s.id})\\b`, "i").test(lower));
+
+      const topicMap = [
+        {
+          label: "Horror & Supernatural",
+          test: /\b(horror|scary|spooky|slasher|zombie|vampire|haunted|ghost|supernatural|exorcist|conjuring|pet sematary)\b/i,
+          regex: /\b(horror|scary|spooky|slasher|zombie|vampire|haunted|ghost|supernatural|exorcist|conjuring|pet sematary|evil|walking dead|charmed|buffy|frankenstein|dracula|omen|halloween|fright)\b/i,
+          catId: wantsFilmsOnly ? "Film" : "Drama"
+        },
+        {
+          label: "Sci-Fi & Fantasy",
+          test: /\b(sci-?fi|science fiction|space|alien|star trek|stargate|futuristic|cyberpunk)\b/i,
+          regex: /\b(sci-?fi|science fiction|star trek|stargate|doctor who|farscape|andromeda|galactica|babylon 5|dune|severance|fallout|alien|predator|matrix|terminator|interstellar|twilight zone)\b/i,
+          catId: wantsFilmsOnly ? "Film" : "Drama"
+        },
+        {
+          label: "Crime, Thriller & Mystery",
+          test: /\b(thriller|crime|murder|detective|mystery|police|forensic|whodunnit)\b/i,
+          regex: /\b(thriller|crime|murder|detective|mystery|police|forensic|fbi|ncis|csi|vera|shetland|midsomer|foyle|poi|jackal|slow horses|ripley|line of duty|unforgotten|silent witness|law & order|killer)\b/i,
+          catId: wantsFilmsOnly ? "Film" : "Drama"
+        },
+        {
+          label: "Comedy & Sitcoms",
+          test: /\b(comedy|comedies|funny|sitcom|stand-?up|panel show|laugh)\b/i,
+          regex: /\b(comedy|sitcom|funny|taskmaster|would i lie|gogglebox|big bang|friends|frasier|simpsons|partridge|porridge|only connect|cats does countdown|mock the week|qi\b|Apollo|young sheldon|office|cheers|raymond)\b/i,
+          catId: "Entertainment"
+        },
+        {
+          label: "Action & Adventure",
+          test: /\b(action|western|westerns|adventure|superhero)\b/i,
+          regex: /\b(action|western|expendables|fast & furious|jurassic|mission impossible|bond|lethal weapon|walker|sundown|gun|outlaw|batman|shazam|venom)\b/i,
+          catId: wantsFilmsOnly ? "Film" : "Entertainment"
+        }
+      ];
+      const matchedTopic = topicMap.find((t) => t.test.test(lower));
+
+      // 3. Detect standard EPG category intent
       const catMap = [
-        { re: /\b(christmas|xmas|festive|seasonal|halloween|easter|summer)\b/i, id: "Seasonal", label: getActiveSeason().chip },
-        { re: /\b(sport|football|cricket|rugby|tennis|f1|boxing)\b/i, id: "Sport", label: "Sport" },
+        { re: /\b(sport|football|soccer|premier league|champions league|nations league|cricket|rugby|tennis|f1|formula 1|boxing|ufc|darts|nfl|golf|snooker)\b/i, id: "Sport", label: "Sport" },
         { re: /\b(film|films|movie|movies|cinema)\b/i, id: "Film", label: "Film" },
         { re: /\b(drama|soaps?)\b/i, id: "Drama", label: "Drama" },
         { re: /\b(doc|documentar(y|ies)|nature|history)\b/i, id: "Documentary", label: "Documentary" },
@@ -4321,15 +4414,15 @@
       ];
       const matchedCat = catMap.find((c) => c.re.test(lower));
 
-      // 3. Detect view intent
+      // 4. Detect view intent
       let matchedView = null;
       if (/\b(what to watch|recommend|tonight'?s picks|picks)\b/i.test(lower)) matchedView = { id: "what-to-watch", label: "What to Watch" };
       else if (/\b(now & next|now and next|on now)\b/i.test(lower)) matchedView = { id: "now-next", label: "Now & Next" };
-      else if (/\b(streaming|on demand|netflix|disney|prime)\b/i.test(lower)) matchedView = { id: "streaming", label: "Streaming" };
-      else if (/\b(what'?s new|headlines|rss)\b/i.test(lower)) matchedView = { id: "whats-new", label: "What's New" };
+      else if (/\b(streaming|on demand|netflix|disney|prime)\b/i.test(lower) && !/when is|where can i/i.test(lower)) matchedView = { id: "streaming", label: "Streaming" };
+      else if (/\b(what'?s new|headlines|rss)\b/i.test(lower)) matchedView = { id: "live-feeds", label: "What's New" };
       else if (/\b(settings|backup|vault|cache|diagnostics|health)\b/i.test(lower)) matchedView = { id: "settings", label: "Settings" };
 
-      // 4. Detect day/time jump
+      // 5. Detect day/time jump
       let dayJump = null;
       if (/\byesterday\b/i.test(lower)) dayJump = -1;
       else if (/\btomorrow\b/i.test(lower)) dayJump = 1;
@@ -4340,15 +4433,98 @@
       else if (/\bmorning\b/i.test(lower)) hourJump = 8;
       else if (/\bafternoon\b/i.test(lower)) hourJump = 14;
       else if (/\blate\b/i.test(lower)) hourJump = 22;
+      else if (/\b(overnight|midnight)\b/i.test(lower)) hourJump = 0;
 
-      // 5. Check if it's a show/when-on-next lookup
+      // 6. Handle Seasonal / Christmas / Holiday queries (e.g. "Show me Christmas movies")
+      if (explicitSeason) {
+        const picks = getSmartPicks({
+          regex: explicitSeason.regex,
+          onlyFilms: wantsFilmsOnly,
+          preferTonight: wantsTonight,
+          dayOffset: dayJump || 0,
+          limit: 5
+        });
+        const lines = [
+          `Here are top <strong>${escapeHtml(explicitSeason.chip)}${wantsFilmsOnly ? " Movies" : " Picks"}</strong> on UK TV &amp; Streaming:`
+        ];
+        if (picks.tv.length) {
+          lines.push(picks.tv.map(formatPickLine).join("<br/>"));
+        }
+        if (picks.stream.length) {
+          lines.push(
+            picks.stream
+              .map((s) => `&bull; <strong>${escapeHtml(s.platform)}</strong>: ${escapeHtml(s.title)} (${formatStars(s.rating)})`)
+              .join("<br/>")
+          );
+        }
+        const actions = [];
+        if (picks.tv[0]) {
+          actions.push({
+            label: `Jump to ${picks.tv[0].ch.name}`,
+            onClick: () => jumpToGuideMatch(picks.tv[0].ch.id, picks.tv[0].dayOffset, picks.tv[0].prog.startMin)
+          });
+          actions.push({
+            label: `Details: ${picks.tv[0].prog.title.slice(0, 18)}`,
+            onClick: () => openProgrammeModal(picks.tv[0].prog.id, picks.tv[0].ch.id)
+          });
+        }
+        actions.push({
+          label: `Switch Guide to ${explicitSeason.chip}`,
+          onClick: () => setGuideModeChoice(explicitSeason.id)
+        });
+        addMsg("bot", lines.join("<br/><br/>"), actions);
+        return;
+      }
+
+      // 7. Handle specific Genre / Topic / Mood queries (e.g. "show me horror", "horror movies", "sci-fi", "comedy tonight")
+      if (matchedTopic) {
+        const picks = getSmartPicks({
+          regex: matchedTopic.regex,
+          onlyFilms: wantsFilmsOnly,
+          preferTonight: wantsTonight,
+          dayOffset: dayJump || 0,
+          limit: 5
+        });
+        const heading = `${matchedTopic.label}${wantsFilmsOnly ? " Movies" : " Shows & Films"}${wantsTonight ? " Tonight" : ""}`;
+        const lines = [`Top <strong>${escapeHtml(heading)}</strong> on TV &amp; Streaming:`];
+        if (picks.tv.length) {
+          lines.push(picks.tv.map(formatPickLine).join("<br/>"));
+        }
+        if (picks.stream.length) {
+          lines.push(
+            picks.stream
+              .map((s) => `&bull; <strong>${escapeHtml(s.platform)}</strong>: ${escapeHtml(s.title)} (${formatStars(s.rating)})`)
+              .join("<br/>")
+          );
+        }
+        const actions = [];
+        if (picks.tv[0]) {
+          actions.push({
+            label: `Jump to ${picks.tv[0].ch.name}`,
+            onClick: () => jumpToGuideMatch(picks.tv[0].ch.id, picks.tv[0].dayOffset, picks.tv[0].prog.startMin)
+          });
+          actions.push({
+            label: "Open Details",
+            onClick: () => openProgrammeModal(picks.tv[0].prog.id, picks.tv[0].ch.id)
+          });
+        } else if (picks.stream[0]) {
+          actions.push({
+            label: "Open Details",
+            onClick: () => openStreamModal(picks.stream[0].id)
+          });
+        }
+        addMsg("bot", lines.join("<br/><br/>"), actions);
+        return;
+      }
+
+      // 8. Clean conversational prefixes for show/channel lookups
       const stripped = q
-        .replace(/^(when is|when'?s|what time is|where can i watch|search for|search|find|look up|is|watch)\s+/i, "")
+        .replace(/^(when is|when'?s|what time is|where can i watch|what'?s on|whats on|show me|find me|give me|recommend|search for|search|find|look up|open|go to|switch to|take me to|is|watch)\s+/i, "")
         .replace(/\s+(on next|next on|on tv|playing|showing|tonight|today|tomorrow|on netflix|on iplayer|\?)+$/gi, "")
         .trim();
 
       const isExplicitNav =
-        /^(open|go to|switch to|show me|take me to)\b/i.test(lower) ||
+        /^(open|go to|switch to|take me to)\b/i.test(lower) ||
         Boolean(matchedView) ||
         (Boolean(matchedPlat) && stripped.split(/\s+/).length <= 3 && !/when|where|next/i.test(lower)) ||
         (Boolean(matchedCat) && stripped.split(/\s+/).length <= 3 && !/when|where|next/i.test(lower));
@@ -4466,13 +4642,32 @@
         else parts.push("TV Guide");
 
         const preview = targetView === "epg"
-          ? getLiveSummaryFor(state.platform, state.epgCategory, state.dayOffset, 3)
+          ? getSmartPicks({
+              platId: matchedPlat ? matchedPlat.id : state.platform,
+              catId: matchedCat ? matchedCat.id : state.epgCategory,
+              onlyFilms: wantsFilmsOnly || (matchedCat && matchedCat.id === "Film"),
+              preferTonight: wantsTonight,
+              dayOffset: state.dayOffset,
+              limit: 4
+            }).tv
           : [];
         const previewHtml = preview.length
-          ? `<br/><br/>` + preview.map((x) => `&bull; <strong>${escapeHtml(x.ch.name)}</strong>: ${escapeHtml(x.prog.title)} (${formatTime(x.prog.startMin)})`).join("<br/>")
+          ? `<br/><br/>` + preview.map(formatPickLine).join("<br/>")
           : "";
+        const navActions = preview[0]
+          ? [
+              {
+                label: `Jump to ${preview[0].ch.name}`,
+                onClick: () => jumpToGuideMatch(preview[0].ch.id, preview[0].dayOffset, preview[0].prog.startMin)
+              },
+              {
+                label: "Open Top Pick",
+                onClick: () => openProgrammeModal(preview[0].prog.id, preview[0].ch.id)
+              }
+            ]
+          : [];
 
-        addMsg("bot", `Moved you to <strong>${escapeHtml(parts.join(" · "))}</strong>.${previewHtml}`);
+        addMsg("bot", `Moved you to <strong>${escapeHtml(parts.join(" · "))}</strong>.${previewHtml}`, navActions);
         return;
       }
 
