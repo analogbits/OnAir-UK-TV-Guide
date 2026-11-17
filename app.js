@@ -1874,18 +1874,21 @@
       const bStatus = getBroadcastStatus(prog);
       if (bStatus === "New") return true;
       if (bStatus === "Repeat") return false;
-      return /\b(new series|brand new|premiere|season 1|series 1|first episode)\b/i.test(`${prog.title || ""} ${prog.ep || ""} ${prog.desc || ""}`);
+      const text = `${prog.title || ""} ${prog.desc || ""}`;
+      if (/\b(19\d{2}|200\d|201\d|202[0-4])\b/.test(text)) return false;
+      return /\b(brand new|new series|world premiere|series premiere|uk premiere)\b/i.test(text);
     };
     const isNewStreamMatch = (item) => {
       if (!item) return false;
       const curYr = new Date().getFullYear();
-      return Boolean(
-        item.thisWeek ||
-        item.nextEpisode ||
-        item.isLiveData ||
-        Number(item.year) >= curYr - 1 ||
-        /\b(new|premiere|season 1|series 1)\b/i.test(`${item.seasons || ""} ${item.desc || ""}`)
-      );
+      if (item.thisWeek || (item.nextEpisode && item.nextEpisode.airdate)) return true;
+      if (Number(item.year) >= curYr) return true;
+      const dateMatch = String(item.seasons || "").match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+      if (dateMatch) {
+        const ageDays = (Date.now() - new Date(`${dateMatch[1]}T12:00:00Z`).getTime()) / 86400000;
+        if (ageDays <= 30) return true;
+      }
+      return false;
     };
     const newTvMatches = tvMatches.filter(isNewTvMatch);
     const newStreamMatches = streamMatches.filter(isNewStreamMatch);
