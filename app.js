@@ -1870,10 +1870,32 @@
 
     el.searchSummary.textContent = `Found ${channelMatches.length} channels, ${liveAndUpcoming.length} live/upcoming, ${pastMatches.length} past broadcasts (-7d..+6d) and ${streamMatches.length} streaming titles for "${query}"${nextSummary}`;
 
+    const isNewTvMatch = ({ prog }) => {
+      if (!prog) return false;
+      const bStatus = getBroadcastStatus(prog);
+      if (bStatus === "New") return true;
+      if (bStatus === "Repeat") return false;
+      return /\b(new series|brand new|premiere|season 1|series 1|first episode)\b/i.test(`${prog.title || ""} ${prog.ep || ""} ${prog.desc || ""}`);
+    };
+    const isNewStreamMatch = (item) => {
+      if (!item) return false;
+      const curYr = new Date().getFullYear();
+      return Boolean(
+        item.thisWeek ||
+        item.nextEpisode ||
+        item.isLiveData ||
+        Number(item.year) >= curYr - 1 ||
+        /\b(new|premiere|season 1|series 1)\b/i.test(`${item.seasons || ""} ${item.desc || ""}`)
+      );
+    };
+    const newTvMatches = tvMatches.filter(isNewTvMatch);
+    const newStreamMatches = streamMatches.filter(isNewStreamMatch);
+
     const filterBar = document.getElementById("searchFilterBar");
     if (filterBar) {
       const tabs = [
         { id: "all", label: `All (${tvMatches.length + streamMatches.length})` },
+        { id: "new", label: `✨ New Shows (${newTvMatches.length + newStreamMatches.length})` },
         { id: "next", label: `Live & On Next (${liveAndUpcoming.length})` },
         { id: "past", label: `Past 7 Days (${pastMatches.length})` },
         { id: "stream", label: `Streaming (${streamMatches.length})` }
@@ -1951,7 +1973,10 @@
 
     let visibleTv = tvMatches;
     let visibleStream = streamMatches;
-    if (state.searchFilter === "next") {
+    if (state.searchFilter === "new") {
+      visibleTv = newTvMatches;
+      visibleStream = newStreamMatches;
+    } else if (state.searchFilter === "next") {
       visibleTv = liveAndUpcoming;
       visibleStream = [];
     } else if (state.searchFilter === "past") {
