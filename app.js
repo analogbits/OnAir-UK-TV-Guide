@@ -351,6 +351,7 @@
     detailModal: document.getElementById("detailModal"),
     modalBody: document.getElementById("modalBody"),
     closeModalBtn: document.getElementById("closeModalBtn"),
+    helpGuideBtn: document.getElementById("helpGuideBtn"),
     themeToggleBtn: document.getElementById("themeToggleBtn"),
     themeIconSun: document.getElementById("themeIconSun"),
     themeIconMoon: document.getElementById("themeIconMoon"),
@@ -5274,6 +5275,62 @@
 
   let syncDebugConsoleVisibility = null;
 
+  function uiDebug(level, source, message, ms = null) {
+    if (ONAIR_LIVE && typeof ONAIR_LIVE.logDebug === "function") {
+      ONAIR_LIVE.logDebug(level, source, message, ms);
+    }
+  }
+
+  function runUiDiagnosticAudit(verbose = false) {
+    const t0 = performance.now();
+    const missingDom = [];
+    Object.entries(el).forEach(([key, val]) => {
+      if (!val || (typeof NodeList !== "undefined" && val instanceof NodeList && val.length === 0)) {
+        missingDom.push(key);
+      }
+    });
+
+    const criticalIds = [
+      "helpGuideBtn",
+      "guideModeToggleBtn",
+      "themeToggleBtn",
+      "liveRefreshBtn",
+      "watchlistBtn",
+      "timeMachineBtn",
+      "chatFab",
+      "detailModal",
+      "modalBody",
+      "onboardingModal"
+    ];
+    criticalIds.forEach((id) => {
+      if (!document.getElementById(id)) missingDom.push(`#${id}`);
+    });
+
+    const brokenPlatforms = [];
+    if (typeof WATCH_PLATFORMS === "object" && WATCH_PLATFORMS) {
+      Object.entries(WATCH_PLATFORMS).forEach(([name, cfg]) => {
+        if (!cfg || !cfg.url || !/^https?:\/\//i.test(cfg.url)) {
+          brokenPlatforms.push(name);
+        }
+      });
+    }
+
+    const ms = Math.round(performance.now() - t0);
+    if (missingDom.length > 0) {
+      uiDebug("error", "UI Audit", `Missing DOM elements: ${missingDom.join(", ")}`, ms);
+    } else if (verbose) {
+      uiDebug("ok", "UI Audit", `All ${Object.keys(el).length} DOM refs & ${criticalIds.length} interactive controls verified`, ms);
+    }
+
+    if (brokenPlatforms.length > 0) {
+      uiDebug("error", "App Links", `Invalid platform URLs in WATCH_PLATFORMS: ${brokenPlatforms.join(", ")}`, ms);
+    } else if (verbose) {
+      uiDebug("ok", "App Links", `All ${Object.keys(WATCH_PLATFORMS || {}).length} UK streaming & catch-up app targets valid`, ms);
+    }
+
+    return { missingDom, brokenPlatforms };
+  }
+
   function initDebugConsole() {
     const wrap = document.getElementById("debugDrawerWrap");
     const fab = document.getElementById("debugFab");
@@ -5282,6 +5339,7 @@
     const summaryEl = document.getElementById("debugSummaryLine");
     const badgeEl = document.getElementById("debugCountBadge");
     const filterBar = document.getElementById("debugFilterBar");
+    const auditBtn = document.getElementById("debugAuditBtn");
     const copyBtn = document.getElementById("debugCopyBtn");
     const clearBtn = document.getElementById("debugClearBtn");
     const closeBtn = document.getElementById("debugCloseBtn");
@@ -5289,15 +5347,189 @@
 
     let levelFilter = "all";
 
+    // 1. Track uncaught JS errors and unhandled promise rejections
+    window.addEventListener("error", (ev) => {
+      const loc = ev.filename ? ` (${ev.filename.split("/").pop()}:${ev.lineno || 0})` : "";
+      uiDebug("error", "Runtime", `${ev.message || "Uncaught script error"}${loc}`);
+    });
+    window.addEventListener("unhandledrejection", (ev) => {
+      const reason = ev.reason && (ev.reason.message || String(ev.reason)) ? (ev.reason.message || String(ev.reason)) : "Unhandled Promise rejection";
+      uiDebug("error", "Async", reason);
+    });
+
+    // 2. Track UI icon/button selections, modal opens, and external streaming app launches
+    const getUiSnapshot = () => ({
+      view: state.view,
+      platform: state.platform,
+      cat: state.epgCategory,
+      day: state.dayOffset,
+      guideMode: state.guideMode,
+      theme: state.theme,
+      detailOpen: Boolean(el.detailModal && !el.detailModal.classList.contains("hidden")),
+      onboardOpen: Boolean(el.onboardingModal && !el.onboardingModal.classList.contains("hidden")),
+      watchlistOpen: Boolean(el.watchlistDrawer && !el.watchlistDrawer.classList.contains("hidden")),
+      chatOpen: Boolean(document.getElementById("chatPanel") && !document.getElementById("chatPanel").classList.contains("hidden")),
+      tmOpen: Boolean(el.tmPopover && !el.tmPopover.classList.contains("hidden")),
+      searchOpen: Boolean(el.searchResultsSection && !el.searchResultsSection.classList.contains("hidden"))
+    });
+
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const target = ev.target && ev.target.closest
+          ? ev.target.closest("a, button, [role='tab'], .epg-prog, .stream-card, .nn-card, .wtw-card, .feed-card")
+          : null;
+        if (!target) return;
+        // Ignore clicks inside the debug panel itself (except Audit UI)
+        if (panel.contains(target) && target.id !== "debugAuditBtn") return;
+
+        const t0 = performance.now();
+        const tag = (target.tagName || "").toLowerCase();
+        const id = target.id ? `#${target.id}` : "";
+        const aria = target.getAttribute("aria-label") || target.getAttribute("title") || "";
+        const rawText = (target.textContent || "").replace(/\s+/g, " ").trim().slice(0, 48);
+        const label = rawText || aria || id || tag;
+
+        // A. External App / Catch-Up / Streaming Link Launch Tracking
+        if (tag === "a") {
+          const href = (target.getAttribute("href") || "").trim();
+          if (!href || href === "#" || /^javascript:/i.test(href)) {
+            if (!target.hasAttribute("data-chat-open-prog") && !target.hasAttribute("data-chat-open-stream") && !target.hasAttribute("data-chat-jump-ch")) {
+              uiDebug("error", "AppLaunch", `Broken or empty link clicked on "${label}" (href="${href || "empty"}")`);
+            }
+            return;
+          }
+          try {
+            const urlObj = new URL(href, window.location.origin);
+            uiDebug("ui", "AppLaunch", `Launching "${label}" -> ${urlObj.hostname}${urlObj.pathname.slice(0, 36)}`);
+          } catch (_) {
+            uiDebug("error", "AppLaunch", `Malformed URL on "${label}": ${href}`);
+          }
+          return;
+        }
+
+        // B. Disabled control check
+        if (target.disabled || target.getAttribute("aria-disabled") === "true") {
+          uiDebug("warn", "UI Blocked", `Clicked disabled control "${label}" ${id}`);
+          return;
+        }
+
+        const before = getUiSnapshot();
+
+        setTimeout(() => {
+          const ms = Math.round(performance.now() - t0);
+          const after = getUiSnapshot();
+
+          // Specific high-value failure checks for icons, modals, drawers & cards
+          if (target.id === "helpGuideBtn" || target.id === "openHelpGuideFromSettingsBtn") {
+            if (!after.detailOpen) {
+              uiDebug("error", "UI Failure", `Help button (${id}) clicked but #detailModal failed to open`, ms);
+            } else {
+              uiDebug("ui", "HelpGuide", `Opened Help & Quick Guide via ${id}`, ms);
+            }
+            return;
+          }
+
+          if (target.classList.contains("epg-prog") || target.hasAttribute("data-prog-id") || target.hasAttribute("data-stream-id") || target.hasAttribute("data-sim-prog")) {
+            if (!after.detailOpen) {
+              uiDebug("error", "UI Failure", `Programme/Stream card "${label}" clicked but #detailModal did not open`, ms);
+            } else {
+              uiDebug("ui", "ModalOpen", `Opened details for "${label}"`, ms);
+            }
+            return;
+          }
+
+          if (target.id === "watchlistBtn") {
+            if (before.watchlistOpen === after.watchlistOpen) {
+              uiDebug("error", "UI Failure", `Watchlist button clicked but drawer did not toggle`, ms);
+            } else {
+              uiDebug("ui", "Watchlist", `Watchlist drawer ${after.watchlistOpen ? "opened" : "closed"}`, ms);
+            }
+            return;
+          }
+
+          if (target.id === "timeMachineBtn") {
+            if (before.tmOpen === after.tmOpen) {
+              uiDebug("error", "UI Failure", `Time Machine button clicked but calendar popover did not toggle`, ms);
+            } else {
+              uiDebug("ui", "TimeMachine", `Calendar popover ${after.tmOpen ? "opened" : "closed"}`, ms);
+            }
+            return;
+          }
+
+          if (target.id === "chatFab") {
+            if (before.chatOpen === after.chatOpen) {
+              uiDebug("error", "UI Failure", `Ask OnAir button clicked but chat panel did not toggle`, ms);
+            } else {
+              uiDebug("ui", "Assistant", `Ask OnAir panel ${after.chatOpen ? "opened" : "closed"}`, ms);
+            }
+            return;
+          }
+
+          if (target.id === "themeToggleBtn") {
+            if (before.theme === after.theme) {
+              uiDebug("error", "UI Failure", `Theme icon clicked but theme remained "${after.theme}"`, ms);
+            } else {
+              uiDebug("ui", "Theme", `Switched theme: ${before.theme} -> ${after.theme}`, ms);
+            }
+            return;
+          }
+
+          if (target.id === "guideModeToggleBtn") {
+            if (before.guideMode === after.guideMode) {
+              uiDebug("error", "UI Failure", `Guide mode button clicked but mode remained "${after.guideMode}"`, ms);
+            } else {
+              uiDebug("ui", "GuideMode", `Switched mode: ${before.guideMode} -> ${after.guideMode}`, ms);
+            }
+            return;
+          }
+
+          if (target.classList.contains("nav-tab")) {
+            uiDebug("ui", "Navigation", `Tab selected: "${label}" (view=${after.view})`, ms);
+            return;
+          }
+
+          if (target.hasAttribute("data-platform")) {
+            uiDebug("ui", "Platform", `Switched platform to "${label}" (${after.platform})`, ms);
+            return;
+          }
+
+          if (target.hasAttribute("data-cat") || target.hasAttribute("data-nncat")) {
+            uiDebug("ui", "Category", `Selected genre filter "${label}"`, ms);
+            return;
+          }
+
+          // Generic icon/button click log
+          uiDebug("ui", "UI Click", `Selected "${label}"${id ? ` (${id})` : ""}`, ms);
+        }, 45);
+      },
+      true
+    );
+
+    document.addEventListener(
+      "change",
+      (ev) => {
+        const t = ev.target;
+        if (!t || panel.contains(t)) return;
+        const id = t.id ? `#${t.id}` : t.tagName;
+        const val = t.type === "checkbox" ? (t.checked ? "ON" : "OFF") : String(t.value || "").slice(0, 40);
+        uiDebug("ui", "SettingChange", `Changed ${id} -> ${val}`);
+      },
+      true
+    );
+
     function renderDebugLogs() {
       const logs = ONAIR_LIVE.getDebugLogs ? ONAIR_LIVE.getDebugLogs() : [];
-      if (badgeEl) badgeEl.textContent = String(logs.length);
+      const errCount = logs.filter((l) => l.level === "error").length;
+      if (badgeEl) {
+        badgeEl.textContent = errCount > 0 ? `${logs.length} · ${errCount}⚠️` : String(logs.length);
+      }
 
       const health = ONAIR_LIVE.getFeedHealth ? ONAIR_LIVE.getFeedHealth() : {};
       const regionShort = ONAIR_LIVE.getRegion ? ONAIR_LIVE.getRegion().short : "UK";
       const backoffs = health.backoffHosts && health.backoffHosts.length ? `Backoff: ${health.backoffHosts.join(", ")}` : "No backoffs";
       if (summaryEl) {
-        summaryEl.textContent = `Region: ${regionShort} • Sky: ${health.sky ? health.sky.status : "?"} • Pluto: ${health.pluto ? health.pluto.status : "?"} • Tubi: ${health.tubi ? health.tubi.status : "?"} • ${backoffs}`;
+        summaryEl.textContent = `Region: ${regionShort} • Sky: ${health.sky ? health.sky.status : "?"} • Pluto: ${health.pluto ? health.pluto.status : "?"} • Tubi: ${health.tubi ? health.tubi.status : "?"} • Errors: ${errCount} • ${backoffs}`;
       }
 
       if (panel.classList.contains("hidden")) return;
@@ -5331,6 +5563,17 @@
       renderDebugLogs();
     };
     if (closeBtn) closeBtn.onclick = () => panel.classList.add("hidden");
+    if (auditBtn) {
+      auditBtn.onclick = () => {
+        const res = runUiDiagnosticAudit(true);
+        renderDebugLogs();
+        showToast(
+          res.missingDom.length || res.brokenPlatforms.length
+            ? `UI Audit found ${res.missingDom.length + res.brokenPlatforms.length} issue(s)`
+            : "UI Audit passed: All icons, modals & app links OK"
+        );
+      };
+    }
     if (clearBtn) {
       clearBtn.onclick = () => {
         if (ONAIR_LIVE.clearDebugLogs) ONAIR_LIVE.clearDebugLogs();
@@ -5356,12 +5599,18 @@
       });
     }
     window.addEventListener("onair:debug-log", renderDebugLogs);
+    runUiDiagnosticAudit(false);
     syncDebugConsoleVisibility();
   }
 
   function openHelpGuideModal() {
-    if (!el.modalBackdrop || !el.modalBody) return;
-    el.modalBody.innerHTML = `
+    const modalEl = el.detailModal || document.getElementById("detailModal");
+    const bodyEl = el.modalBody || document.getElementById("modalBody");
+    if (!modalEl || !bodyEl) {
+      uiDebug("error", "HelpGuide", "Cannot open Help Guide: #detailModal or #modalBody not found in DOM");
+      return;
+    }
+    bodyEl.innerHTML = `
       <div class="modal-kicker">
         <span class="mini-tag">Interactive Help &amp; Quick Guide</span>
         <span class="mini-tag">UK &amp; Ireland TV + Streaming</span>
@@ -5427,7 +5676,7 @@
         <button id="helpRunWizardBtn" class="btn-secondary" type="button">✨ Setup Wizard</button>
       </div>
     `;
-    el.modalBackdrop.classList.remove("hidden");
+    modalEl.classList.remove("hidden");
     const tryChat = document.getElementById("helpOpenAssistantBtn");
     if (tryChat) {
       tryChat.onclick = () => {

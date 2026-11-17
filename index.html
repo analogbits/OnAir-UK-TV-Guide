@@ -10,7 +10,7 @@
     href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="styles.css?v=20261117a" />
+  <link rel="stylesheet" href="styles.css?v=20261117b" />
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -447,10 +447,11 @@
       <aside id="debugPanel" class="debug-panel hidden" aria-label="Debug Data Pull Inspector">
         <div class="debug-panel-header">
           <div>
-            <strong>🛠️ Data Pull &amp; Feed Debug</strong>
+            <strong>🛠️ Data, App &amp; UI Debug Inspector</strong>
             <div id="debugSummaryLine" class="debug-summary-line">Initializing...</div>
           </div>
           <div style="display:flex; gap:6px; align-items:center;">
+            <button id="debugAuditBtn" class="ghost-btn" type="button" style="padding:3px 8px; font-size:11px;" title="Run full UI, icon &amp; app link diagnostic">Audit UI</button>
             <button id="debugCopyBtn" class="ghost-btn" type="button" style="padding:3px 8px; font-size:11px;">Copy</button>
             <button id="debugClearBtn" class="ghost-btn" type="button" style="padding:3px 8px; font-size:11px;">Clear</button>
             <button id="debugCloseBtn" class="modal-close" type="button" aria-label="Close debug panel">&times;</button>
@@ -458,6 +459,7 @@
         </div>
         <div class="debug-filter-bar" id="debugFilterBar">
           <button class="pill-btn is-active" data-dbg-level="all" type="button">All</button>
+          <button class="pill-btn" data-dbg-level="ui" type="button">UI / Apps</button>
           <button class="pill-btn" data-dbg-level="ok" type="button">OK</button>
           <button class="pill-btn" data-dbg-level="warn" type="button">Warn / 429</button>
           <button class="pill-btn" data-dbg-level="error" type="button">Error</button>
@@ -475,7 +477,7 @@
   <script src="fast_epg_snapshot.js?v=20261116z"></script>
   <script src="vault_data.js?v=20261116z"></script>
   <script src="past_epg_data.js?v=20261116z"></script>
-  <script src="live_feeds.js?v=20261117a"></script>
-  <script src="app.js?v=20261117a"></script>
+  <script src="live_feeds.js?v=20261117b"></script>
+  <script src="app.js?v=20261117b"></script>
 </body>
 </html>

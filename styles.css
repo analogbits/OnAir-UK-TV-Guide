@@ -3299,3 +3299,13 @@ select {
     z-index: 9999 !important;
   }
 }
+
+.debug-level-ui {
+  border-left: 3px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.debug-level-ui .debug-src-tag {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+}
