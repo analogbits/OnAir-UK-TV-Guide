@@ -2411,6 +2411,185 @@
           crewWrap.style.display = "";
         }
       }
+      if ((Array.isArray(resolved.castList) && resolved.castList.length) || (Array.isArray(resolved.crewList) && resolved.crewList.length)) {
+        populateModalSimilarSection({
+          title: rawTitle,
+          genre: presetOpts.genre || "",
+          desc: resolved.summary || presetOpts.desc || "",
+          cast: [...(resolved.castList || []), ...(resolved.crewList || [])].join(", "),
+          interests: presetOpts.interests || [],
+          isFilm: Boolean(presetOpts.isFilm)
+        });
+      }
+    });
+  }
+
+  function computeSimilarItems({ title = "", genre = "", desc = "", cast = "", interests = [], isFilm = false }) {
+    const cleanTarget = String(title || "").replace(/^(New:\s*|Film:\s*|Live:\s*)/i, "").toLowerCase().trim();
+    const stopWords = new Set(["about", "after", "again", "against", "around", "before", "behind", "between", "during", "episode", "family", "first", "found", "friend", "friends", "group", "house", "lives", "local", "makes", "modern", "night", "other", "people", "place", "series", "season", "small", "story", "their", "there", "these", "things", "three", "through", "today", "together", "under", "until", "where", "which", "while", "world", "years", "young"]);
+    const keywords = new Set(
+      `${cleanTarget} ${desc || ""}`
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 5 && !stopWords.has(w))
+    );
+    const people = String(cast || "")
+      .split(",")
+      .map((s) => s.replace(/\(.*?\)/g, "").trim().toLowerCase())
+      .filter((s) => s.length >= 4 && !/^(drama|comedy|entertainment|film|sport|documentary|news|kids|music|thriller|sci-fi)$/i.test(s));
+    const targetInterests = new Set(Array.isArray(interests) ? interests : []);
+    const targetGenre = String(genre || "").toLowerCase();
+
+    const pool = [];
+    const seenTitles = new Set([cleanTarget]);
+
+    // 1. Streaming + Pluto TV + Tubi catalogue
+    getMergedCatalogue().forEach((item) => {
+      const t = String(item.title || "").toLowerCase().trim();
+      if (!t || seenTitles.has(t)) return;
+      seenTitles.add(t);
+      pool.push({
+        kind: "stream",
+        id: item.id,
+        title: item.title,
+        badge: item.platform,
+        color: item.platformColor || "#18181b",
+        meta: `${item.type} • ${item.genre} • ${item.year}`,
+        genre: item.genre || "",
+        isFilm: item.type === "Films",
+        cast: item.cast || "",
+        desc: item.desc || "",
+        interests: item.interests || [],
+        rating: Number(item.rating) || 3.8
+      });
+    });
+
+    // 2. Live TV highlights
+    collectTvHighlights().forEach((entry) => {
+      const p = entry.prog;
+      const ch = entry.channel;
+      if (!p || !ch) return;
+      const t = String(p.title || "").replace(/^(New:\s*|Film:\s*)/i, "").toLowerCase().trim();
+      if (!t || seenTitles.has(t)) return;
+      seenTitles.add(t);
+      pool.push({
+        kind: "tv",
+        id: p.id,
+        channelId: ch.id,
+        title: p.title,
+        badge: ch.name,
+        color: ch.color || "#334155",
+        meta: `${formatTime(p.startMin)} • ${p.genre}`,
+        genre: p.genre || "",
+        isFilm: p.genre === "Film" || /^film:/i.test(p.title || ""),
+        cast: p.cast || "",
+        desc: p.desc || "",
+        interests: p.interests || [],
+        rating: Number(p.stars) || 3.8
+      });
+    });
+
+    const scored = pool
+      .map((cand) => {
+        let score = (cand.rating || 3.5) * 2.5;
+        const candGenre = cand.genre.toLowerCase();
+        if (targetGenre && candGenre === targetGenre) score += 22;
+        else if (isFilm && cand.isFilm) score += 18;
+        else if (
+          (targetGenre === "drama" && candGenre === "thriller") ||
+          (targetGenre === "thriller" && candGenre === "drama") ||
+          (targetGenre === "entertainment" && candGenre === "comedy") ||
+          (targetGenre === "comedy" && candGenre === "entertainment")
+        ) {
+          score += 14;
+        }
+        if (isFilm === cand.isFilm) score += 8;
+
+        (cand.interests || []).forEach((tag) => {
+          if (targetInterests.has(tag)) score += 20;
+        });
+
+        const candHaystack = `${cand.title} ${cand.desc} ${cand.cast}`.toLowerCase();
+        people.forEach((person) => {
+          if (candHaystack.includes(person)) score += 45;
+        });
+
+        let kwHits = 0;
+        keywords.forEach((kw) => {
+          if (kwHits < 4 && candHaystack.includes(kw)) {
+            score += 9;
+            kwHits++;
+          }
+        });
+
+        return { cand, score };
+      })
+      .filter((x) => x.score >= 18)
+      .sort((a, b) => b.score - a.score);
+
+    return { items: scored.slice(0, 6).map((x) => x.cand), people: people.slice(0, 3) };
+  }
+
+  function populateModalSimilarSection(target) {
+    const wrap = document.getElementById("modalSimilarWrap");
+    if (!wrap) return;
+    const { items, people } = computeSimilarItems(target);
+    const searchPills = [
+      target.genre ? `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(target.genre)}">🔍 More ${escapeHtml(target.genre)}</button>` : "",
+      ...people.map((p) => {
+        const display = p.replace(/\b\w/g, (c) => c.toUpperCase());
+        return `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(display)}">🎭 ${escapeHtml(display)}</button>`;
+      })
+    ].filter(Boolean).join("");
+
+    if (!items.length && !searchPills) {
+      wrap.innerHTML = "";
+      return;
+    }
+
+    wrap.innerHTML = `
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <span class="info-label" style="margin:0; font-size:12px; letter-spacing:0.04em; text-transform:uppercase;">Shows &amp; Movies Like This</span>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">${searchPills}</div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(185px, 1fr)); gap:10px;">
+          ${items
+            .map(
+              (it) => `
+            <button type="button" class="similar-mini-card" data-sim-kind="${it.kind}" data-sim-id="${escapeHtml(it.id)}" data-sim-ch="${escapeHtml(it.channelId || "")}" style="text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--surface-2, rgba(128,128,128,0.06)); cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:border-color 0.15s;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+                <span class="platform-tag" style="background:${it.color}; font-size:10px; padding:2px 6px;">${escapeHtml(it.badge)}</span>
+                <span style="font-size:10.5px; color:var(--text-muted);">${escapeHtml(it.genre)}</span>
+              </div>
+              <div style="font-weight:700; font-size:13px; color:var(--text-primary); line-height:1.25; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden;">${escapeHtml(it.title)}</div>
+              <div style="font-size:11px; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escapeHtml(it.desc || it.meta)}</div>
+            </button>
+          `
+            )
+            .join("")}
+        </div>
+      </div>
+    `;
+
+    wrap.querySelectorAll("[data-sim-kind]").forEach((btn) => {
+      btn.onclick = () => {
+        if (btn.dataset.simKind === "stream") {
+          openStreamModal(btn.dataset.simId);
+        } else {
+          openProgrammeModal(btn.dataset.simId, btn.dataset.simCh);
+        }
+      };
+    });
+
+    wrap.querySelectorAll("[data-sim-search]").forEach((btn) => {
+      btn.onclick = () => {
+        const q = btn.dataset.simSearch || "";
+        el.detailModal.classList.add("hidden");
+        el.globalSearch.value = q;
+        runSearch(q);
+      };
     });
   }
 
@@ -2494,6 +2673,7 @@
         <button class="ghost-btn" id="modalCalendarBtn" type="button">📅 Add to Calendar (.ics)</button>
         <a class="ghost-btn" id="modalEmailBtn" href="mailto:?subject=${encodeURIComponent(`TV Reminder: ${prog.title} on ${ch.name}`)}&body=${encodeURIComponent(`${prog.title}\nChannel: ${ch.name}\nTime: ${formatTime(prog.startMin)}–${formatTime(prog.endMin)} (${state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")})\n\n${prog.desc || ""}`)}" style="text-decoration:none;">✉️ Email Reminder</a>
       </div>
+      <div id="modalSimilarWrap"></div>
     `;
 
     const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
@@ -2543,7 +2723,22 @@
     };
 
     el.detailModal.classList.remove("hidden");
-    enrichModalDirectLink(prog.title, prog.officialSite, { isLive });
+    const isFilmProg = prog.genre === "Film" || /^film:/i.test(prog.title || "");
+    populateModalSimilarSection({
+      title: prog.title,
+      genre: prog.genre || "",
+      desc: prog.desc || "",
+      cast: prog.cast || "",
+      interests: prog.interests || [],
+      isFilm: isFilmProg
+    });
+    enrichModalDirectLink(prog.title, prog.officialSite, {
+      isLive,
+      genre: prog.genre || "",
+      desc: prog.desc || "",
+      interests: prog.interests || [],
+      isFilm: isFilmProg
+    });
   }
 
   function openStreamModal(streamId) {
@@ -2597,6 +2792,7 @@
           ${saved ? "✓ Saved in Watchlist" : "+ Add to Watchlist"}
         </button>
       </div>
+      <div id="modalSimilarWrap"></div>
     `;
 
     document.getElementById("modalWatchlistBtn").onclick = () => {
@@ -2610,11 +2806,23 @@
     };
 
     el.detailModal.classList.remove("hidden");
+    populateModalSimilarSection({
+      title: item.title,
+      genre: item.genre || "",
+      desc: item.desc || "",
+      cast: item.cast || "",
+      interests: item.interests || [],
+      isFilm: item.type === "Films"
+    });
     enrichModalDirectLink(item.title, item.officialSite, {
       imdbId: item.imdbId,
       imdbScore: item.imdbScore,
       rtSlug: item.rtSlug,
-      rtScore: item.rtScore
+      rtScore: item.rtScore,
+      genre: item.genre || "",
+      desc: item.desc || "",
+      interests: item.interests || [],
+      isFilm: item.type === "Films"
     });
   }
 
