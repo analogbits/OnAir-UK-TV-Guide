@@ -377,13 +377,52 @@
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
-  function getBroadcastStatus(prog) {
+  const LIVE_FIRST_RUN_RE = /^(live:|breakfast|morning live|good morning britain|lorraine|this morning|loose women|politics live|jeremy vine|sunday with laura kuenssberg|the one show|newsnight|channel 4 news|itv news|itv lunchtime news|itv evening news|bbc news|utv live|stv news|newsline|weather|nations league|match of the day live|six nations live)\b/i;
+  const REPEAT_ARCHIVE_CH_RE = /\b(dave|gold|u&drama|u&yesterday|u&w|u&alibi|itv2|itv3|itv4|bbc three|bbc four|more4|e4|4seven|5usa|5star|5select|challenge|sky replay|sky mix|sky comedy|sky max|sky witness|sky sci-fi|legend|talkingpictures|quest|really|dmax|blaze|comedy central)\b/i;
+  const SYNDICATED_REPEAT_SHOW_RE = /\b(frasier|friends|cheers|everybody loves raymond|king of queens|seinfeld|the big bang theory|young sheldon|two and a half men|modern family|brooklyn nine-nine|the office|parks and recreation|scrubs|futurama|the simpsons|family guy|american dad|bob's burgers|south park|midsomer murders|poirot|agata christie's poirot|miss marple|marple|vera|lewis|endeavour|inspector morse|a touch of frost|heartbeat|the royal|where the heart is|classic emmerdale|classic coronation street|doctors|holby city|casualty|father brown|sister boniface|death in paradise|beyond paradise|shakespeare & hathaway|mcdonald & dodds|new tricks|silent witness|waking the dead|spooks|hustle|life on mars|ashes to ashes|doc martin|all creatures great and small|call the midwife|downton abbey|gavin & stacey|peep show|the inbetweeners|friday night dinner|my family|keeping up appearances|one foot in the grave|only fools and horses|fawlty towers|blackadder|vicar of dibley|dinnerladies|royale family|mrs brown's boys|not going out|would i lie to you|qi\b|8 out of 10 cats|taskmaster|mock the week|live at the apollo|bargain hunt|homes under the hammer|escape to the country|antiques roadshow|vintage antiques roadshow|flog it|the repair shop|pointless|impossible|bridge of lies|house of games|the chase|tipping point|lingo|deal or no deal|dickinson's real deal|catchphrase|wheel of fortune|bulls-eye|blankety blank|family fortunes|come dine with me|four in a bed|a place in the sun|location, location, location|grand designs|george clarke|countryfile|coast|great british railway journeys|great coastal railway journeys|scam interceptors|doorbell detectives|dashcam justice|police interceptors|traffic cops|road wars|nothing to declare|border security|bondi rescue|24 hours in a&e|24 hours in police custody|ambulance|999: on the front line|the dog house)\b/i;
+
+  function getBroadcastStatus(prog, ch = null) {
     if (!prog) return "";
-    const title = prog.title || "";
-    const desc = prog.desc || "";
-    if (prog.isNew || /^New:\s*/i.test(title)) return "New";
-    if (/^Live:\s*/i.test(title) || (prog.genre === "News" && !/\(R\)|\brepeat\b/i.test(desc))) return "";
-    if (prog.isRepeat || /\(R\)|\brepeat\b/i.test(desc) || /\(R\)|\brepeat\b/i.test(title)) return "Repeat";
+    const title = String(prog.title || "").trim();
+    const desc = String(prog.desc || "").trim();
+    const ep = String(prog.ep || "").trim();
+    const chName = ch && ch.name ? String(ch.name) : "";
+
+    // 1. Explicit New markers in title or synopsis
+    if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
+      return "New";
+    }
+
+    // 2. Explicit Repeat markers in title, synopsis or flags
+    if (prog.isRepeat || /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b|\boriginally broadcast\b/i.test(`${title} ${desc}`)) {
+      return "Repeat";
+    }
+
+    // 3. Live news, weather, live sport & live daytime magazine shows are never repeats
+    if (
+      LIVE_FIRST_RUN_RE.test(title) ||
+      prog.genre === "News" ||
+      (prog.genre === "Sport" && !/\b(highlights|classic|archive|relive|replay|years)\b/i.test(`${title} ${desc}`))
+    ) {
+      return "";
+    }
+
+    // 4. Repeat/Archive channels (ITV3, Dave, Gold, More4, E4, Sky Mix, Sky Comedy, etc.) when not explicitly New:
+    if (chName && REPEAT_ARCHIVE_CH_RE.test(chName) && prog.genre !== "Film") {
+      return "Repeat";
+    }
+
+    // 5. Known syndicated/daytime repeat series or daytime/overnight episodic airings without "New:"
+    const hasEpisodeNum = /\b(series\s*\d+|season\s*\d+|ep(isode)?\s*\d+|\d+\/\d+\.)/i.test(`${ep} ${desc}`);
+    const isDaytimeOrLate = typeof prog.startMin === "number" && (prog.startMin < 17 * 60 + 30 || prog.startMin >= 22 * 60 + 30);
+    if (SYNDICATED_REPEAT_SHOW_RE.test(title)) {
+      if (isDaytimeOrLate || !prog.isNew) return "Repeat";
+    }
+    if (hasEpisodeNum && isDaytimeOrLate && !prog.isNew) {
+      return "Repeat";
+    }
+
+    if (prog.isNew) return "New";
     return "";
   }
 
@@ -987,8 +1026,10 @@
                 const starHtml = starInfo
                   ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
                   : "";
-
-                const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
+                const bStatus = getBroadcastStatus(p, ch);
+                const isRep = bStatus === "Repeat";
+                const rSuffix = isRep && !/\(R\)/i.test(p.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : "";
+                const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title}${isRep && !/\(R\)/i.test(p.title || "") ? " (R)" : bStatus === "New" ? " (NEW)" : ""} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
 
                 return `
                   <button
@@ -1001,8 +1042,8 @@
                     type="button"
                   >
                     <div class="prog-top-row">
-                      <span class="prog-title">${starHtml}${p.title}</span>
-                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : getBroadcastStatus(p) === "New" ? `<span class="mini-tag">NEW</span>` : getBroadcastStatus(p) === "Repeat" ? `<span class="mini-tag">R</span>` : ""}
+                      <span class="prog-title">${starHtml}${p.title}${rSuffix}</span>
+                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat broadcast">R</span>` : ""}
                     </div>
                     <div class="prog-bottom-row">
                       <span class="prog-time">${formatTime(p.startMin)}–${formatTime(p.endMin)}</span>
@@ -1111,6 +1152,8 @@
 
         const currentStar = current ? getEditorialStarInfo(current, ch) : null;
         const nextStar = next ? getEditorialStarInfo(next, ch) : null;
+        const currentStatus = current ? getBroadcastStatus(current, ch) : "";
+        const nextStatus = next ? getBroadcastStatus(next, ch) : "";
 
         return `
           <article class="nn-card">
@@ -1130,7 +1173,7 @@
                       <span>On Now ${currentStar ? `&bull; <span style="color:#f59e0b; font-weight:700;" title="${escapeHtml(currentStar.label)}">&#9733; ${escapeHtml(currentStar.label)}</span>` : ""} ${getLiveStreamUrl(ch) ? `&bull; <a href="${getLiveStreamUrl(ch)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#dc2626; font-weight:700; text-decoration:none;">&#9654; Watch Live &nearr;</a>` : ""}</span>
                       <span>${formatTime(current.startMin)} – ${formatTime(current.endMin)}</span>
                     </div>
-                    <div class="nn-slot-title">${currentStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(currentStar.label)}">&#9733;</span>` : ""}${current.title}</div>
+                    <div class="nn-slot-title">${currentStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(currentStar.label)}">&#9733;</span>` : ""}${current.title}${currentStatus === "Repeat" && !/\(R\)/i.test(current.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : currentStatus === "New" ? ` <span class="mini-tag live" style="margin-left:4px;">NEW</span>` : ""}</div>
                     <div class="prog-bottom-row">${current.ep} &bull; ${current.genre}</div>
                     <div class="nn-progress-bar"><div class="nn-progress-fill" style="width:${pct}%"></div></div>
                   </div>`
@@ -1144,7 +1187,7 @@
                       <span>Up Next ${nextStar ? `&bull; <span style="color:#f59e0b; font-weight:700;" title="${escapeHtml(nextStar.label)}">&#9733; Pick</span>` : ""}</span>
                       <span>${formatTime(next.startMin)} – ${formatTime(next.endMin)}</span>
                     </div>
-                    <div class="nn-slot-title">${nextStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(nextStar.label)}">&#9733;</span>` : ""}${next.title}</div>
+                    <div class="nn-slot-title">${nextStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(nextStar.label)}">&#9733;</span>` : ""}${next.title}${nextStatus === "Repeat" && !/\(R\)/i.test(next.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : nextStatus === "New" ? ` <span class="mini-tag live" style="margin-left:4px;">NEW</span>` : ""}</div>
                     <div class="prog-bottom-row">${next.ep} &bull; ${next.genre}</div>
                   </div>`
                 : ""
@@ -2948,6 +2991,31 @@
     return null;
   }
 
+  function findOtherAiringsForProgramme(prog, currentChannelId) {
+    if (!prog || !prog.title) return [];
+    const normTarget = normalizeEditorialTitle(prog.title);
+    if (!normTarget || normTarget.length < 3) return [];
+    const localCache = getCachedStoreForSearch();
+    const out = [];
+    const dayOffsets = [0, 1, 2, 3, 4, 5, 6, -1, -2];
+    for (const d of dayOffsets) {
+      for (const c of liveChannels) {
+        if (c.plutoSlug || c.tubiId) continue;
+        const evs = getDayScheduleForSearch(c, d, localCache);
+        if (!Array.isArray(evs)) continue;
+        for (const ev of evs) {
+          if (ev.id === prog.id && c.id === currentChannelId && d === state.dayOffset) continue;
+          if (normalizeEditorialTitle(ev.title) === normTarget) {
+            const st = getBroadcastStatus(ev, c);
+            out.push({ prog: ev, ch: c, dayOffset: d, status: st });
+            if (out.length >= 6) return out;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   function openProgrammeModal(progId, channelId) {
     const ch = liveChannels.find((c) => c.id === channelId);
     const prog = findProgrammeById(progId, channelId);
@@ -2960,6 +3028,30 @@
     const isLive = state.dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
     const starInfo = getEditorialStarInfo(prog, ch);
+    const bStatus = getBroadcastStatus(prog, ch);
+    const isRep = bStatus === "Repeat";
+    const descWithR = isRep && !/\(R\)/i.test(prog.desc || "") ? `${prog.desc} (R)` : prog.desc;
+    const otherAirings = findOtherAiringsForProgramme(prog, ch.id);
+    const otherAiringsHtml = otherAirings.length
+      ? `
+        <div style="margin:12px 0 14px; padding:10px 12px; border-radius:10px; border:1px solid var(--border-subtle); background:var(--bg-surface-alt);">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:6px;">
+            🔁 Repeat &amp; Other Broadcast Airings (${otherAirings.length})
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            ${otherAirings
+              .map(
+                (a) => `
+                <button type="button" class="pill-btn" data-other-air-prog="${escapeHtml(a.prog.id)}" data-other-air-ch="${escapeHtml(a.ch.id)}" data-other-air-day="${a.dayOffset}" style="font-size:11.5px; padding:4px 10px;">
+                  <strong>${escapeHtml(a.ch.name)}</strong> &bull; ${escapeHtml(getDayLabelShort(a.dayOffset))} ${formatTime(a.prog.startMin)} ${a.status === "Repeat" ? '<span class="repeat-inline-mark">(R)</span>' : a.status === "New" ? '<span class="mini-tag live">NEW</span>' : ""}
+                </button>
+              `
+              )
+              .join("")}
+          </div>
+        </div>
+      `
+      : "";
 
     el.modalBody.innerHTML = `
       <div id="modalHeaderWrap" class="${prog.image ? "modal-header-with-poster" : ""}">
@@ -2971,17 +3063,19 @@
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
             ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
-            ${getBroadcastStatus(prog) === "New" ? `<span class="mini-tag live">NEW</span>` : getBroadcastStatus(prog) === "Repeat" ? `<span class="mini-tag">REPEAT</span>` : ""}
+            ${bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat showing">REPEAT (R)</span>` : ""}
           </div>
-          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}</h2>
+          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
           <div class="modal-meta-line">
-            <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
+            <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.startMin < prog.endMin ? prog.endMin : prog.endMin)}</strong></span>
             <span>&bull; ${prog.ep}</span>
+            <span>&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? "🔁 Repeat (R)" : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
             ${prog.stars ? `<span class="star-rating">&bull; ${formatStars(prog.stars)}</span>` : ""}
           </div>
         </div>
       </div>
-      <p class="modal-synopsis">${prog.desc}</p>
+      <p class="modal-synopsis">${descWithR}</p>
+      ${otherAiringsHtml}
       <div id="modalReviewsBar" class="reviews-bar">${renderReviewsBar(prog.title)}</div>
       <div class="modal-info-grid">
         <div>
@@ -3010,6 +3104,12 @@
       </div>
       <div id="modalSimilarWrap"></div>
     `;
+
+    el.modalBody.querySelectorAll("[data-other-air-prog]").forEach((btn) => {
+      btn.onclick = () => {
+        openProgrammeModal(btn.dataset.otherAirProg, btn.dataset.otherAirCh);
+      };
+    });
 
     const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 

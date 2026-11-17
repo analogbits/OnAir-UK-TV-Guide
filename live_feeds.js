@@ -1510,15 +1510,11 @@ const ONAIR_LIVE = (() => {
                   ? `Episode ${ev.episodenumber}`
                   : genre;
 
-              const isRepeat = /\(R\)|\brepeat\b/i.test(ev.sy || "") || /\(R\)|\brepeat\b/i.test(rawTitle);
-              const tvmazeKeys = Object.keys(tvmazeMap || {});
-              const isTvMazeNew = Boolean(
-                !isRepeat &&
-                  titleKey &&
-                  (tvmazeMap[titleKey] ||
-                    tvmazeKeys.some(
-                      (k) => k.length >= 7 && (titleKey.endsWith(" " + k) || titleKey.startsWith(k + " "))
-                    ))
+              const isExplicitNew = Boolean(ev.new) || /^New:\s*/i.test(rawTitle) || /\b(brand[- ]new|new series|series premiere)\b/i.test(ev.sy || "");
+              const isRepeat = !isExplicitNew && (
+                Boolean(ev.repeat || ev.r_flag) ||
+                /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b/i.test(ev.sy || "") ||
+                /\(R\)|\brepeat\b/i.test(rawTitle)
               );
 
               return {
@@ -1533,10 +1529,10 @@ const ONAIR_LIVE = (() => {
                 desc: ev.sy || "Live UK television broadcast.",
                 cast: genre,
                 stars: null,
-                isNew: Boolean(ev.new) || isTvMazeNew,
+                isNew: isExplicitNew,
                 isRepeat,
                 isLiveData: true,
-                thisWeek: Boolean(ev.new) || isTvMazeNew,
+                thisWeek: isExplicitNew,
                 interests: inferInterestsFromEvent(rawTitle, ev.sy || "", genre),
                 startMin: clampedStart,
                 endMin: clampedEnd
