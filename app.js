@@ -38,6 +38,7 @@
     lowDataMode: localStorage.getItem("onair_low_data") === "1",
     debugMode: localStorage.getItem("onair_debug_mode") === "1",
     seasonOverride: localStorage.getItem("onair_season_override") || "auto",
+    guideMode: localStorage.getItem("onair_guide_mode") || "seasonal",
     seasonalSourceFilter: "all",
     wtwAheadDayOffset: 0,
     wtwAheadFilter: "All",
@@ -471,6 +472,43 @@
     return { ...getAutoSeason(date), isOverride: false };
   }
 
+  function isSeasonalMode() {
+    return state.guideMode === "seasonal";
+  }
+
+  function syncGuideModeUI() {
+    const season = getActiveSeason();
+    const seasonal = isSeasonalMode();
+    [document.getElementById("guideModeToggleBtn"), document.getElementById("headerGuideModeBtn")].forEach((btn) => {
+      if (!btn) return;
+      btn.textContent = seasonal ? `${season.chip} Mode` : "📺 Normal";
+      btn.title = seasonal
+        ? `Seasonal Mode active (${season.chip}) — click to switch entire guide to Normal viewing`
+        : `Normal Mode active — click to switch entire guide to ${season.chip} Seasonal Mode`;
+      btn.style.borderColor = seasonal ? "var(--accent)" : "";
+      btn.style.color = seasonal ? "var(--accent)" : "";
+      btn.onclick = toggleGuideMode;
+    });
+    if (!state.timeMachineDate && el.timeMachineBtnLabel) {
+      el.timeMachineBtnLabel.textContent = seasonal ? `${season.chip.split(" ")[0]} Time Machine` : "Time Machine";
+    }
+  }
+
+  function toggleGuideMode() {
+    state.guideMode = isSeasonalMode() ? "normal" : "seasonal";
+    localStorage.setItem("onair_guide_mode", state.guideMode);
+    const season = getActiveSeason();
+    syncGuideModeUI();
+    renderWhatToWatch();
+    renderStreaming();
+    if (state.view === "epg") renderEPG(false);
+    if (el.tmPopover && !el.tmPopover.classList.contains("hidden") && el.timeMachineBtn) {
+      el.timeMachineBtn.click();
+      el.timeMachineBtn.click();
+    }
+    showToast(isSeasonalMode() ? `Switched entire guide to ${season.chip} Mode` : "Switched entire guide to 📺 Normal Viewing");
+  }
+
   function progMatchesCategory(prog, category, chName = "") {
     if (!prog) return false;
     if (category === "Seasonal") {
@@ -593,18 +631,7 @@
   function renderCategoryPills() {
     const season = getActiveSeason();
     const cats = [...CHANNEL_CATEGORIES.slice(0, 2), { id: "Seasonal", label: season.chip }, ...CHANNEL_CATEGORIES.slice(2)];
-    const modeBtn = document.getElementById("guideModeToggleBtn");
-    if (modeBtn) {
-      const isSeasonal = state.epgCategory === "Seasonal";
-      modeBtn.textContent = isSeasonal ? `${season.chip} (Seasonal)` : "📺 Normal";
-      modeBtn.style.borderColor = isSeasonal ? "var(--accent)" : "";
-      modeBtn.style.color = isSeasonal ? "var(--accent)" : "";
-      modeBtn.onclick = () => {
-        state.epgCategory = state.epgCategory === "Seasonal" ? "All" : "Seasonal";
-        renderCategoryPills();
-        renderEPG(true);
-      };
-    }
+    syncGuideModeUI();
     el.epgCategoryPills.innerHTML = cats
       .map((item) => {
         const id = typeof item === "string" ? item : item.id;
@@ -1092,9 +1119,13 @@
     const catalogue = getMergedCatalogue();
     const tvPicks = collectTvHighlights();
 
-    // 0. Live Seasonal Spotlight (auto-updates by time of year)
+    // 0. Live Seasonal Spotlight (auto-updates by time of year, shown in Seasonal Mode)
     const seasonalEl = document.getElementById("wtwSeasonalSpotlight");
-    if (seasonalEl) {
+    if (seasonalEl && !isSeasonalMode()) {
+      seasonalEl.innerHTML = "";
+      seasonalEl.style.display = "none";
+    } else if (seasonalEl) {
+      seasonalEl.style.display = "";
       const season = getActiveSeason();
       const nowMin = getNowMinutes();
       const liveSeasonal = [];
@@ -1318,7 +1349,7 @@
     const whatsNewText = (Array.isArray(liveFeedItems) ? liveFeedItems : [])
       .map((f) => `${f.title || ""} ${f.description || ""}`.toLowerCase())
       .join(" \n ");
-    const season = typeof getActiveSeason === "function" ? getActiveSeason() : null;
+    const season = typeof getActiveSeason === "function" && isSeasonalMode() ? getActiveSeason() : null;
     const highRated = catalogue.filter((item) => (Number(item.rating) || 0) >= 4);
     const sourceList = highRated.length >= count ? highRated : catalogue;
     const scored = sourceList
@@ -1331,7 +1362,7 @@
         if (tvTitles.has(cleanTitle)) score += 12;
         if (cleanTitle.length >= 4 && whatsNewText.includes(cleanTitle)) score += 20;
         if (season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`)) {
-          score += 8;
+          score += 65;
         }
         return { item, score };
       })
@@ -1462,7 +1493,9 @@
     });
 
     if (state.streamSort === "rating") {
-      items.sort((a, b) => b.rating - a.rating || b.year - a.year);
+      const season = isSeasonalMode() ? getActiveSeason() : null;
+      const isSeasonMatch = (it) => (season && season.regex ? Number(season.regex.test(`${it.title || ""} ${it.desc || ""} ${it.genre || ""}`)) : 0);
+      items.sort((a, b) => isSeasonMatch(b) - isSeasonMatch(a) || b.rating - a.rating || b.year - a.year);
     } else if (state.streamSort === "year") {
       items.sort((a, b) => b.year - a.year);
     } else if (state.streamSort === "title") {
@@ -1481,6 +1514,11 @@
 
   function renderStreamCard(item) {
     const saved = isInWatchlist(item.id);
+    const season = isSeasonalMode() ? getActiveSeason() : null;
+    const seasonalMatch = !!(season && season.regex && season.regex.test(`${item.title || ""} ${item.desc || ""} ${item.genre || ""}`));
+    const seasonalBadge = seasonalMatch
+      ? `<span class="mini-tag" style="background:rgba(217,45,32,0.12); color:var(--brand-red); border-color:rgba(217,45,32,0.28); font-weight:700;">${escapeHtml(season.chip)} Pick</span>`
+      : "";
     const nextBadge = item.nextEpisode && item.nextEpisode.airdate
       ? `<div style="margin-top:6px; font-size:11.5px; font-weight:700; color:var(--accent);">📅 Upcoming: ${escapeHtml(item.nextEpisode.airdate)}${item.nextEpisode.airtime ? ` · ${escapeHtml(item.nextEpisode.airtime)}` : ""}</div>`
       : "";
@@ -1500,7 +1538,10 @@
           ${nextBadge}
           <p class="stream-card-desc">${item.desc}</p>
           <div class="stream-card-footer">
-            <span class="mini-tag">Cert ${item.age}</span>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <span class="mini-tag">Cert ${item.age}</span>
+              ${seasonalBadge}
+            </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
               ${tmJumpBtn}
               <button class="pill-btn ${saved ? "is-active" : ""}" data-toggle-wl-stream="${item.id}" type="button">
@@ -3882,6 +3923,7 @@
       el.timeMachineBtn.setAttribute("aria-expanded", "false");
     }
     if (el.timeMachineBtnLabel) el.timeMachineBtnLabel.textContent = "Time Machine";
+    syncGuideModeUI();
     if (el.timeMachineBanner) {
       el.timeMachineBanner.classList.add("hidden");
       el.timeMachineBanner.innerHTML = "";
@@ -3969,7 +4011,7 @@
           { label: "🎆 Bonfire Night", iso: `${yNow}-11-05` }
         ]
       };
-      const seasonChips = seasonalPresetsById[activeSeason.id] || seasonalPresetsById.christmas;
+      const seasonChips = isSeasonalMode() ? (seasonalPresetsById[activeSeason.id] || seasonalPresetsById.christmas) : [];
       const presets = [
         ...seasonChips,
         { label: "1 Year Ago", iso: fmtIso(oneYrAgo) },
