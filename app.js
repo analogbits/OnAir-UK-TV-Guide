@@ -99,9 +99,62 @@
   const livePlutoFetchedDays = new Set();
   const liveTubiFetchedDays = new Set();
 
+  function getPlutoTubiStreamingItems() {
+    const dayMap = liveEpgByDay.get(0) || {};
+    const nowMin = getNowMinutes();
+    const out = [];
+    const seen = new Set();
+    let plutoCount = 0;
+    let tubiCount = 0;
+
+    liveChannels.forEach((ch) => {
+      const isPluto = Boolean(ch.plutoSlug);
+      const isTubi = Boolean(ch.tubiId);
+      if (!isPluto && !isTubi) return;
+      if (isPluto && plutoCount >= 35) return;
+      if (isTubi && tubiCount >= 25) return;
+      const progs = dayMap[ch.sid] || [];
+      if (!progs.length) return;
+      const picked = progs.find((p) => nowMin >= p.startMin && nowMin < p.endMin) || progs.find((p) => p.endMin > nowMin) || progs[0];
+      if (!picked || !picked.title) return;
+      const clean = picked.title.toLowerCase().trim();
+      if (seen.has(clean)) return;
+      seen.add(clean);
+
+      const type = picked.genre === "Film" ? "Films" : picked.genre === "Documentary" ? "Documentaries" : picked.genre === "Sport" ? "Sport" : "TV Series";
+      const genre = ["Drama", "Thriller", "Comedy", "Sci-Fi", "Documentary", "Sport"].includes(picked.genre) ? picked.genre : (picked.genre === "Film" ? "Drama" : "Comedy");
+      out.push({
+        id: `fast-${isPluto ? "pluto" : "tubi"}-${ch.id}`,
+        title: picked.title,
+        platform: isPluto ? "Pluto TV" : "Tubi",
+        platformColor: isPluto ? "#18181b" : "#fa382f",
+        type,
+        genre,
+        seasons: `${ch.name} • Free Live/On-Demand`,
+        year: new Date().getFullYear(),
+        rating: 4,
+        age: picked.rating || "12",
+        thisWeek: true,
+        isLiveData: true,
+        desc: picked.desc || `${picked.title} streaming free on ${isPluto ? "Pluto TV" : "Tubi"} (${ch.name}).`,
+        interests: Array.isArray(picked.interests) && picked.interests.length ? picked.interests : [genre]
+      });
+      if (isPluto) plutoCount++;
+      else tubiCount++;
+    });
+    return out;
+  }
+
   function getMergedCatalogue() {
+    const fastItems = getPlutoTubiStreamingItems();
     const seen = new Set(STREAMING_CATALOGUE.map((i) => i.title.toLowerCase()));
-    const extras = liveStreamingItems.filter((i) => !seen.has(i.title.toLowerCase()));
+    const extras = [];
+    [...liveStreamingItems, ...fastItems].forEach((i) => {
+      const k = String(i.title || "").toLowerCase();
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      extras.push(i);
+    });
     return [...extras, ...STREAMING_CATALOGUE];
   }
 
@@ -1335,7 +1388,7 @@
   // Streaming & On-Demand Finder View
   // ========================================================================
   function renderStreamingFilters() {
-    const platforms = ["All", "Netflix", "BBC iPlayer", "ITVX", "Channel 4", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "MUBI", "BFI Player"];
+    const platforms = ["All", "Netflix", "BBC iPlayer", "ITVX", "Channel 4", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "Pluto TV", "Tubi", "MUBI", "BFI Player"];
     const types = ["All", "TV Series", "Films", "Documentaries", "Sport"];
     const genres = ["All", "Drama", "Thriller", "Comedy", "Sci-Fi", "Documentary", "Sport"];
     const windows = ["All", "This Week", "Earlier This Month"];
@@ -1482,6 +1535,41 @@
 
   function renderStreaming() {
     renderStreamingFilters();
+
+    if ((!livePlutoFetchedDays.has(0) || !liveTubiFetchedDays.has(0)) && typeof ONAIR_LIVE !== "undefined") {
+      if (!livePlutoFetchedDays.has(0) && ONAIR_LIVE.fetchPlutoTvData) {
+        livePlutoFetchedDays.add(0);
+        ONAIR_LIVE.fetchPlutoTvData(0, false).then((pluto) => {
+          if (pluto && pluto.channels && pluto.channels.length) {
+            const currentMap = liveEpgByDay.get(0) || {};
+            pluto.channels.forEach((c) => {
+              const evs = pluto.schedules[c.id] || pluto.schedules[c.sid] || [];
+              currentMap[c.id] = evs;
+              if (c.sid) currentMap[c.sid] = evs;
+            });
+            liveEpgByDay.set(0, currentMap);
+            if (state.view === "streaming") renderStreaming();
+            else if (state.view === "what-to-watch") renderWhatToWatch();
+          }
+        }).catch(() => {});
+      }
+      if (!liveTubiFetchedDays.has(0) && ONAIR_LIVE.fetchTubiLiveData) {
+        liveTubiFetchedDays.add(0);
+        ONAIR_LIVE.fetchTubiLiveData(0, false).then((tubi) => {
+          if (tubi && tubi.channels && tubi.channels.length) {
+            const currentMap = liveEpgByDay.get(0) || {};
+            tubi.channels.forEach((c) => {
+              const evs = tubi.schedules[c.id] || tubi.schedules[c.sid] || [];
+              currentMap[c.id] = evs;
+              if (c.sid) currentMap[c.sid] = evs;
+            });
+            liveEpgByDay.set(0, currentMap);
+            if (state.view === "streaming") renderStreaming();
+            else if (state.view === "what-to-watch") renderWhatToWatch();
+          }
+        }).catch(() => {});
+      }
+    }
 
     const catalogue = getMergedCatalogue();
     const weeklyPicks = getWeeklyEditorsPicks(catalogue, 10);
