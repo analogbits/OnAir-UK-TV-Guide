@@ -32,6 +32,7 @@
     favorites: new Set(JSON.parse(localStorage.getItem("onair_favorites") || "[]")),
     watchlist: JSON.parse(localStorage.getItem("onair_watchlist") || "[]"),
     reminders: new Set(JSON.parse(localStorage.getItem("onair_reminders") || "[]")),
+    reminderItems: JSON.parse(localStorage.getItem("onair_reminder_items") || "[]"),
     theme: localStorage.getItem("onair_theme") || "system",
     refreshMins: Number(localStorage.getItem("onair_refresh_mins") || 30),
     lowDataMode: localStorage.getItem("onair_low_data") === "1",
@@ -257,6 +258,76 @@
     if (/^Live:\s*/i.test(title) || (prog.genre === "News" && !/\(R\)|\brepeat\b/i.test(desc))) return "";
     if (prog.isRepeat || /\(R\)|\brepeat\b/i.test(desc) || /\(R\)|\brepeat\b/i.test(title)) return "Repeat";
     return "";
+  }
+
+  function downloadReminderIcs(title, channelName, isoDate, startMin, endMin, desc = "") {
+    const dt = isoDate || getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const [y, m, d] = dt.split("-").map(Number);
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const sh = Math.floor(startMin / 60) % 24;
+    const sm = startMin % 60;
+    const eh = Math.floor(endMin / 60) % 24;
+    const em = endMin % 60;
+    const dtStart = `${y}${pad2(m)}${pad2(d)}T${pad2(sh)}${pad2(sm)}00`;
+    const dtEnd = `${y}${pad2(m)}${pad2(d)}T${pad2(eh)}${pad2(em)}00`;
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//OnAir UK//TV Reminder//EN",
+      "BEGIN:VEVENT",
+      `UID:onair-${Date.now()}@analogbits.github.io`,
+      `DTSTART:${dtStart}`,
+      `DTEND:${dtEnd}`,
+      `SUMMARY:${String(title).replace(/\n/g, " ")} (${channelName})`,
+      `DESCRIPTION:${String(desc || "").replace(/\n/g, " ").slice(0, 240)}`,
+      "BEGIN:VALARM",
+      "TRIGGER:-PT10M",
+      "ACTION:DISPLAY",
+      `DESCRIPTION:${String(title)} starts in 10 minutes on ${channelName}`,
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR"
+    ].join("\r\n");
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${dt}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1000);
+  }
+
+  function checkDueReminders() {
+    if (!Array.isArray(state.reminderItems) || !state.reminderItems.length) return;
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    let changed = false;
+    state.reminderItems.forEach((item) => {
+      if (!item || item.alerted || item.isoDate !== todayIso) return;
+      const diff = item.startMin - nowMin;
+      if (diff >= -1 && diff <= 10) {
+        item.alerted = true;
+        changed = true;
+        const msg = diff <= 0
+          ? `${item.title} is starting now on ${item.channelName}`
+          : `${item.title} starts in ${diff} min (${formatTime(item.startMin)}) on ${item.channelName}`;
+        showToast(`🔔 ${msg}`);
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          try {
+            new Notification("OnAir UK Reminder", { body: msg });
+          } catch {
+            // Ignore notification errors
+          }
+        }
+      }
+    });
+    if (changed) {
+      localStorage.setItem("onair_reminder_items", JSON.stringify(state.reminderItems));
+    }
   }
 
   function formatTime(minutesFromMidnight) {
@@ -1410,6 +1481,12 @@
 
   function renderStreamCard(item) {
     const saved = isInWatchlist(item.id);
+    const nextBadge = item.nextEpisode && item.nextEpisode.airdate
+      ? `<div style="margin-top:6px; font-size:11.5px; font-weight:700; color:var(--accent);">📅 Upcoming: ${escapeHtml(item.nextEpisode.airdate)}${item.nextEpisode.airtime ? ` · ${escapeHtml(item.nextEpisode.airtime)}` : ""}</div>`
+      : "";
+    const tmJumpBtn = item.nextEpisode && item.nextEpisode.airdate
+      ? `<button class="pill-btn" data-tm-jump-iso="${escapeHtml(item.nextEpisode.airdate)}" type="button">🕰️ Time Machine</button>`
+      : "";
     return `
       <article class="stream-card" data-stream-id="${item.id}">
         <div class="stream-card-banner" style="background:${item.platformColor}"></div>
@@ -1420,12 +1497,16 @@
           </div>
           <h3 class="stream-card-title">${item.title}</h3>
           <div class="stream-card-meta">${item.type} &bull; ${item.genre} &bull; ${item.seasons} &bull; ${item.year}</div>
+          ${nextBadge}
           <p class="stream-card-desc">${item.desc}</p>
           <div class="stream-card-footer">
             <span class="mini-tag">Cert ${item.age}</span>
-            <button class="pill-btn ${saved ? "is-active" : ""}" data-toggle-wl-stream="${item.id}" type="button">
-              ${saved ? "✓ Saved" : "+ Watchlist"}
-            </button>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              ${tmJumpBtn}
+              <button class="pill-btn ${saved ? "is-active" : ""}" data-toggle-wl-stream="${item.id}" type="button">
+                ${saved ? "✓ Saved" : "+ Watchlist"}
+              </button>
+            </div>
           </div>
         </div>
       </article>
@@ -1629,12 +1710,27 @@
         const res = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query.trim())}`);
         if (res.ok) {
           const list = await res.json();
-          (Array.isArray(list) ? list.slice(0, 6) : []).forEach((entry) => {
+          const topShows = Array.isArray(list) ? list.slice(0, 6) : [];
+          const nextEpMap = {};
+          await Promise.all(
+            topShows.slice(0, 2).map(async (entry) => {
+              const epHref = entry && entry.show && entry.show._links && entry.show._links.nextepisode && entry.show._links.nextepisode.href;
+              if (!epHref) return;
+              try {
+                const epRes = await fetch(epHref);
+                if (epRes.ok) nextEpMap[entry.show.id] = await epRes.json();
+              } catch {
+                // Ignore
+              }
+            })
+          );
+          topShows.forEach((entry) => {
             const show = entry && entry.show;
             if (!show || !show.name) return;
             if (results.some((r) => r.title.toLowerCase() === show.name.toLowerCase())) return;
             const net = (show.network && show.network.name) || (show.webChannel && show.webChannel.name) || "Streaming / On Demand";
             const cleanSummary = (show.summary || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            const nextEp = nextEpMap[show.id] || null;
             results.push({
               id: `tvmaze-${show.id}`,
               title: show.name,
@@ -1650,6 +1746,7 @@
               desc: cleanSummary || `${show.name} (${net}). Click Details to open direct UK on-demand links (Netflix, Channel 4, iPlayer, Prime Video).`,
               image: (show.image && (show.image.medium || show.image.original)) || "",
               officialSite: show.officialSite || show.url || "",
+              nextEpisode: nextEp && nextEp.airdate ? { airdate: nextEp.airdate, airtime: nextEp.airtime || "", name: nextEp.name || "", season: nextEp.season, number: nextEp.number } : null,
               isLiveData: true
             });
           });
@@ -1847,6 +1944,15 @@
         }
         el.searchSummary.textContent = `Not on live UK TV (-7d..+6d), but found ${dirItems.length} show match(es) for "${query}"`;
         el.searchResultsGrid.innerHTML = dirItems.map(renderStreamCard).join("");
+        el.searchResultsGrid.querySelectorAll("[data-tm-jump-iso]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const iso = btn.dataset.tmJumpIso;
+            closeSearch();
+            switchView("epg");
+            loadTimeMachineDate(iso);
+          });
+        });
       });
     }
 
@@ -2115,36 +2221,61 @@
         </div>
       </div>
       ${renderWhereToWatchBlock(prog.title, ch.catchup, prog.officialSite, isLive ? { isLive: true, liveUrl, channelName: ch.name } : null)}
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-wrap:wrap;">
         <button class="btn-primary" id="modalWatchlistBtn" type="button">
           ${saved ? "✓ Saved in Watchlist" : "+ Add to Watchlist"}
         </button>
         <button class="ghost-btn" id="modalReminderBtn" type="button">
-          ${hasRem ? "🔔 Reminder Set" : "🔔 Set Reminder"}
+          ${hasRem ? "🔔 Reminder Set" : "🔔 Notify Me"}
         </button>
+        <button class="ghost-btn" id="modalCalendarBtn" type="button">📅 Add to Calendar (.ics)</button>
+        <a class="ghost-btn" id="modalEmailBtn" href="mailto:?subject=${encodeURIComponent(`TV Reminder: ${prog.title} on ${ch.name}`)}&body=${encodeURIComponent(`${prog.title}\nChannel: ${ch.name}\nTime: ${formatTime(prog.startMin)}–${formatTime(prog.endMin)} (${state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")})\n\n${prog.desc || ""}`)}" style="text-decoration:none;">✉️ Email Reminder</a>
       </div>
     `;
+
+    const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 
     document.getElementById("modalWatchlistBtn").onclick = () => {
       toggleWatchlist({
         id: prog.id,
         kind: "tv",
         title: prog.title,
-        subtitle: `${ch.name} (${formatTime(prog.startMin)})`,
+        subtitle: `${ch.name} (${activeIsoDate} ${formatTime(prog.startMin)})`,
         channelId: ch.id
       });
       openProgrammeModal(progId, channelId);
     };
 
-    document.getElementById("modalReminderBtn").onclick = () => {
+    document.getElementById("modalCalendarBtn").onclick = () => {
+      downloadReminderIcs(prog.title, ch.name, activeIsoDate, prog.startMin, prog.endMin, prog.desc);
+      showToast(`Calendar reminder (.ics) downloaded for ${prog.title}`);
+    };
+
+    document.getElementById("modalReminderBtn").onclick = async () => {
       if (state.reminders.has(prog.id)) {
         state.reminders.delete(prog.id);
+        state.reminderItems = state.reminderItems.filter((r) => r.id !== prog.id);
         showToast(`Reminder removed for ${prog.title}`);
       } else {
+        if (typeof Notification !== "undefined" && Notification.permission === "default") {
+          try {
+            await Notification.requestPermission();
+          } catch {
+            // Ignore permission prompt errors
+          }
+        }
         state.reminders.add(prog.id);
-        showToast(`Reminder set for ${prog.title} at ${formatTime(prog.startMin)}`);
+        state.reminderItems = [
+          ...state.reminderItems.filter((r) => r.id !== prog.id),
+          { id: prog.id, title: prog.title, channelName: ch.name, isoDate: activeIsoDate, startMin: prog.startMin, endMin: prog.endMin, alerted: false }
+        ];
+        const permNote = typeof Notification !== "undefined" && Notification.permission === "granted"
+          ? "Browser notification + alert set"
+          : "In-app alert set (allow notifications or use Add to Calendar for background alerts)";
+        showToast(`${permNote} for ${prog.title} (${formatTime(prog.startMin)})`);
       }
-      localStorage.setItem("rt_reminders", JSON.stringify([...state.reminders]));
+      localStorage.setItem("onair_reminders", JSON.stringify([...state.reminders]));
+      localStorage.setItem("onair_reminder_items", JSON.stringify(state.reminderItems));
       openProgrammeModal(progId, channelId);
     };
 
@@ -4078,6 +4209,7 @@
         lastSeasonId = currentSeasonId;
         renderCategoryPills();
       }
+      checkDueReminders();
       if (state.view === "epg" && state.dayOffset === 0) renderEPG(false);
       else if (state.view === "now-next") renderNowNext(false);
       else if (state.view === "what-to-watch") renderWhatToWatch();
