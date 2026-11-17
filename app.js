@@ -2424,8 +2424,30 @@
     });
   }
 
-  function computeSimilarItems({ title = "", genre = "", desc = "", cast = "", interests = [], isFilm = false }) {
+  const similarShowSearchCache = new Map();
+
+  function extractCoreTitleTokens(rawTitle) {
+    const clean = String(rawTitle || "")
+      .replace(/^(New:\s*|Film:\s*|Live:\s*)/i, "")
+      .replace(/\s*[-:–]\s*(Series|Season|Episode|Part|Special|Uncloaked|Unpacked|Extra|Aftersun|Late\s*&\s*Live).*$/i, "")
+      .toLowerCase();
+    const regionOrNoise = new Set([
+      "the", "and", "for", "with", "from", "into", "over", "under", "about", "after", "before",
+      "show", "live", "series", "season", "episode", "special", "celebrity", "all", "stars",
+      "ireland", "irish", "uk", "british", "britain", "us", "usa", "america", "american",
+      "australia", "australian", "italia", "italy", "canada", "canadian", "nz", "zealand",
+      "uncloaked", "unpacked", "extra", "companion", "movie", "film"
+    ]);
+    return clean
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !regionOrNoise.has(w));
+  }
+
+  function computeSimilarItems({ title = "", genre = "", desc = "", cast = "", interests = [], isFilm = false }, extraDirItems = []) {
     const cleanTarget = String(title || "").replace(/^(New:\s*|Film:\s*|Live:\s*)/i, "").toLowerCase().trim();
+    const titleTokens = extractCoreTitleTokens(title);
+    const titleStems = titleTokens.map((w) => w.replace(/s$/, ""));
     const stopWords = new Set(["about", "after", "again", "against", "around", "before", "behind", "between", "during", "episode", "family", "first", "found", "friend", "friends", "group", "house", "lives", "local", "makes", "modern", "night", "other", "people", "place", "series", "season", "small", "story", "their", "there", "these", "things", "three", "through", "today", "together", "under", "until", "where", "which", "while", "world", "years", "young"]);
     const keywords = new Set(
       `${cleanTarget} ${desc || ""}`
@@ -2436,13 +2458,35 @@
     );
     const people = String(cast || "")
       .split(",")
-      .map((s) => s.replace(/\(.*?\)/g, "").trim().toLowerCase())
-      .filter((s) => s.length >= 4 && !/^(drama|comedy|entertainment|film|sport|documentary|news|kids|music|thriller|sci-fi)$/i.test(s));
+      .map((s) => s.replace(/\(.*?\)/g, "").trim())
+      .filter((s) => s.length >= 4 && !/^(drama|comedy|entertainment|film|sport|documentary|news|kids|music|thriller|sci-fi|adventure)$/i.test(s));
+    const peopleLower = people.map((p) => p.toLowerCase());
     const targetInterests = new Set(Array.isArray(interests) ? interests : []);
     const targetGenre = String(genre || "").toLowerCase();
 
     const pool = [];
     const seenTitles = new Set([cleanTarget]);
+
+    // 0. Extra live directory / franchise matches (e.g. TVMaze franchise sisters)
+    (extraDirItems || []).forEach((item) => {
+      const t = String(item.title || "").toLowerCase().trim();
+      if (!t || seenTitles.has(t)) return;
+      seenTitles.add(t);
+      pool.push({
+        kind: item.kind || "search",
+        id: item.id || "",
+        title: item.title,
+        badge: item.badge || item.platform || "TV Guide",
+        color: item.color || item.platformColor || "#1d4ed8",
+        meta: item.meta || `${item.type || "TV Series"} • ${item.genre || ""}`,
+        genre: item.genre || genre || "Entertainment",
+        isFilm: Boolean(item.isFilm),
+        cast: item.cast || "",
+        desc: item.desc || "",
+        interests: item.interests || [],
+        rating: Number(item.rating) || 4.2
+      });
+    });
 
     // 1. Streaming + Pluto TV + Tubi catalogue
     getMergedCatalogue().forEach((item) => {
@@ -2465,7 +2509,39 @@
       });
     });
 
-    // 2. Live TV highlights
+    // 2. Scan all loaded EPG channels/days for franchise/title matches + Live TV highlights
+    if (titleStems.length) {
+      const localCache = getCachedStoreForSearch();
+      liveChannels.forEach((ch) => {
+        for (let d = -2; d <= 4; d++) {
+          const progs = getDayScheduleForSearch(ch, d, localCache);
+          if (!Array.isArray(progs)) continue;
+          progs.forEach((p) => {
+            if (!p || !p.title) return;
+            const t = String(p.title).replace(/^(New:\s*|Film:\s*)/i, "").toLowerCase().trim();
+            if (!t || seenTitles.has(t)) return;
+            if (!titleStems.some((stem) => t.includes(stem))) return;
+            seenTitles.add(t);
+            pool.push({
+              kind: "tv",
+              id: p.id,
+              channelId: ch.id,
+              title: p.title,
+              badge: ch.name,
+              color: ch.color || "#334155",
+              meta: `${getDayLabelShort(d)} ${formatTime(p.startMin)} • ${p.genre}`,
+              genre: p.genre || "",
+              isFilm: p.genre === "Film" || /^film:/i.test(p.title || ""),
+              cast: p.cast || "",
+              desc: p.desc || "",
+              interests: p.interests || [],
+              rating: Number(p.stars) || 4.2
+            });
+          });
+        }
+      });
+    }
+
     collectTvHighlights().forEach((entry) => {
       const p = entry.prog;
       const ch = entry.channel;
@@ -2493,7 +2569,16 @@
     const scored = pool
       .map((cand) => {
         let score = (cand.rating || 3.5) * 2.5;
+        const candTitleLower = cand.title.toLowerCase();
         const candGenre = cand.genre.toLowerCase();
+
+        // Massive boost for same-franchise / sister shows (e.g. "The Traitors Ireland" -> "The Traitors", "The Traitors Italia", "The Traitors US")
+        titleStems.forEach((stem) => {
+          if (stem.length >= 4 && candTitleLower.includes(stem)) {
+            score += 120;
+          }
+        });
+
         if (targetGenre && candGenre === targetGenre) score += 22;
         else if (isFilm && cand.isFilm) score += 18;
         else if (
@@ -2511,7 +2596,7 @@
         });
 
         const candHaystack = `${cand.title} ${cand.desc} ${cand.cast}`.toLowerCase();
-        people.forEach((person) => {
+        peopleLower.forEach((person) => {
           if (candHaystack.includes(person)) score += 45;
         });
 
@@ -2528,19 +2613,20 @@
       .filter((x) => x.score >= 18)
       .sort((a, b) => b.score - a.score);
 
-    return { items: scored.slice(0, 6).map((x) => x.cand), people: people.slice(0, 3) };
+    return { items: scored.slice(0, 6).map((x) => x.cand), people: people.slice(0, 3), titleTokens };
   }
 
-  function populateModalSimilarSection(target) {
+  function populateModalSimilarSection(target, extraDirItems = []) {
     const wrap = document.getElementById("modalSimilarWrap");
     if (!wrap) return;
-    const { items, people } = computeSimilarItems(target);
+    const { items, people, titleTokens } = computeSimilarItems(target, extraDirItems);
+    const franchisePill = titleTokens.length
+      ? `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(titleTokens[0])}">🔍 All "${escapeHtml(titleTokens[0].replace(/^./, (c) => c.toUpperCase()))}" Shows</button>`
+      : "";
     const searchPills = [
+      franchisePill,
       target.genre ? `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(target.genre)}">🔍 More ${escapeHtml(target.genre)}</button>` : "",
-      ...people.map((p) => {
-        const display = p.replace(/\b\w/g, (c) => c.toUpperCase());
-        return `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(display)}">🎭 ${escapeHtml(display)}</button>`;
-      })
+      ...people.map((p) => `<button type="button" class="chip-pill" data-sim-search="${escapeHtml(p)}">🎭 ${escapeHtml(p)}</button>`)
     ].filter(Boolean).join("");
 
     if (!items.length && !searchPills) {
@@ -2558,7 +2644,7 @@
           ${items
             .map(
               (it) => `
-            <button type="button" class="similar-mini-card" data-sim-kind="${it.kind}" data-sim-id="${escapeHtml(it.id)}" data-sim-ch="${escapeHtml(it.channelId || "")}" style="text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--surface-2, rgba(128,128,128,0.06)); cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:border-color 0.15s;">
+            <button type="button" class="similar-mini-card" data-sim-kind="${it.kind}" data-sim-id="${escapeHtml(it.id)}" data-sim-ch="${escapeHtml(it.channelId || "")}" data-sim-title="${escapeHtml(it.title)}" style="text-align:left; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:var(--surface-2, rgba(128,128,128,0.06)); cursor:pointer; display:flex; flex-direction:column; gap:4px; transition:border-color 0.15s;">
               <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
                 <span class="platform-tag" style="background:${it.color}; font-size:10px; padding:2px 6px;">${escapeHtml(it.badge)}</span>
                 <span style="font-size:10.5px; color:var(--text-muted);">${escapeHtml(it.genre)}</span>
@@ -2577,8 +2663,13 @@
       btn.onclick = () => {
         if (btn.dataset.simKind === "stream") {
           openStreamModal(btn.dataset.simId);
-        } else {
+        } else if (btn.dataset.simKind === "tv") {
           openProgrammeModal(btn.dataset.simId, btn.dataset.simCh);
+        } else {
+          const q = btn.dataset.simTitle || "";
+          el.detailModal.classList.add("hidden");
+          el.globalSearch.value = q;
+          runSearch(q);
         }
       };
     });
@@ -2591,6 +2682,44 @@
         runSearch(q);
       };
     });
+
+    // Fetch live sister/franchise shows (e.g. "Traitors" -> The Traitors UK, US, Australia, NZ, Italia) once per core token
+    if (!extraDirItems.length && titleTokens.length) {
+      const qKey = titleTokens.slice(0, 2).join(" ");
+      if (similarShowSearchCache.has(qKey)) {
+        const cached = similarShowSearchCache.get(qKey);
+        if (cached && cached.length) populateModalSimilarSection(target, cached);
+      } else {
+        similarShowSearchCache.set(qKey, []);
+        fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(qKey)}`)
+          .then((r) => (r.ok ? r.json() : []))
+          .then((rows) => {
+            const mapped = (Array.isArray(rows) ? rows : []).slice(0, 6).map((entry) => {
+              const s = entry && entry.show;
+              if (!s || !s.name) return null;
+              const net = (s.network && s.network.name) || (s.webChannel && s.webChannel.name) || "TV Series";
+              const country = (s.network && s.network.country && s.network.country.code) || (s.webChannel && s.webChannel.country && s.webChannel.country.code) || "";
+              const summary = String(s.summary || "").replace(/<[^>]+>/g, "").trim();
+              return {
+                kind: "search",
+                id: `tvm-${s.id}`,
+                title: country && !s.name.toLowerCase().includes(country.toLowerCase()) ? `${s.name} (${country})` : s.name,
+                badge: net,
+                color: "#dc2626",
+                genre: (Array.isArray(s.genres) && s.genres[0]) || target.genre || "Entertainment",
+                desc: summary || `${s.name} on ${net}.`,
+                rating: (s.rating && s.rating.average ? s.rating.average / 2 : 4.2)
+              };
+            }).filter(Boolean);
+            similarShowSearchCache.set(qKey, mapped);
+            const modalTitleEl = document.getElementById("modalTitle");
+            if (mapped.length && modalTitleEl && modalTitleEl.textContent === target.title) {
+              populateModalSimilarSection(target, mapped);
+            }
+          })
+          .catch(() => {});
+      }
+    }
   }
 
   // ========================================================================
