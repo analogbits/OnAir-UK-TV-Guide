@@ -16,6 +16,16 @@ const ONAIR_LIVE = (() => {
   const VAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days for reusable show metadata & links
   const STORAGE_KEY = "onair_live_epg_v7";
   const VAULT_STORAGE_KEY = "onair_show_vault_v1";
+  const IDB_DB_NAME = "onair_uk_db_v1";
+  const IDB_STORE = "kv";
+  let memCache = null;
+  let memVault = null;
+  let idbPromise = null;
+  const idbStats = {
+    backend: typeof indexedDB !== "undefined" ? (typeof CompressionStream !== "undefined" ? "IndexedDB (gzip)" : "IndexedDB") : "localStorage",
+    epgCompressedBytes: 0,
+    vaultCompressedBytes: 0
+  };
   const inFlightRequests = new Map();
   const hostBackoffUntil = new Map();
   const feedHealth = {
@@ -371,15 +381,155 @@ const ONAIR_LIVE = (() => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
+  async function gzipCompressJson(obj) {
+    const json = JSON.stringify(obj);
+    if (typeof CompressionStream === "undefined" || typeof TextEncoder === "undefined") {
+      return { gzip: false, json, byteLength: json.length * 2 };
+    }
+    const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+    const buf = await new Response(stream).arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    return { gzip: true, bytes, byteLength: bytes.byteLength };
+  }
+
+  async function gzipDecompressJson(record) {
+    if (!record) return null;
+    if (!record.gzip) {
+      return typeof record.json === "string" ? JSON.parse(record.json) : record;
+    }
+    if (typeof DecompressionStream === "undefined") return null;
+    const raw = record.bytes instanceof Uint8Array ? record.bytes : new Uint8Array(record.bytes);
+    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const text = await new Response(stream).text();
+    return JSON.parse(text);
+  }
+
+  function openIdb() {
+    if (typeof indexedDB === "undefined") return Promise.resolve(null);
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(IDB_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return idbPromise;
+  }
+
+  async function idbGet(key) {
+    const db = await openIdb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  async function idbSet(key, value) {
+    const db = await openIdb();
+    if (!db) return false;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  async function idbDelete(key) {
+    const db = await openIdb();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(key);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function persistCompressedIdb(key, obj, statField) {
+    try {
+      const packed = await gzipCompressJson(obj);
+      idbStats[statField] = packed.byteLength || 0;
+      const ok = await idbSet(key, packed);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  (async function hydrateIdbStore() {
+    if (typeof indexedDB === "undefined") return;
+    try {
+      const epgRec = await idbGet("epg_cache");
+      if (epgRec) {
+        idbStats.epgCompressedBytes = epgRec.byteLength || (epgRec.bytes ? epgRec.bytes.byteLength : 0);
+        const parsed = await gzipDecompressJson(epgRec);
+        if (parsed && typeof parsed === "object") {
+          memCache = memCache ? { ...parsed, ...memCache } : parsed;
+        }
+      } else {
+        const lsEpg = localStorage.getItem(STORAGE_KEY);
+        if (lsEpg) {
+          const parsed = JSON.parse(lsEpg);
+          memCache = memCache ? { ...parsed, ...memCache } : parsed;
+          if (await persistCompressedIdb("epg_cache", memCache, "epgCompressedBytes")) {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      }
+
+      const vaultRec = await idbGet("show_vault");
+      if (vaultRec) {
+        idbStats.vaultCompressedBytes = vaultRec.byteLength || (vaultRec.bytes ? vaultRec.bytes.byteLength : 0);
+        const parsed = await gzipDecompressJson(vaultRec);
+        if (parsed && typeof parsed === "object") {
+          memVault = memVault ? { ...parsed, ...memVault } : parsed;
+        }
+      } else {
+        const lsVault = localStorage.getItem(VAULT_STORAGE_KEY);
+        if (lsVault) {
+          const parsed = JSON.parse(lsVault);
+          memVault = memVault ? { ...parsed, ...memVault } : parsed;
+          if (await persistCompressedIdb("show_vault", memVault, "vaultCompressedBytes")) {
+            localStorage.removeItem(VAULT_STORAGE_KEY);
+          }
+        }
+      }
+    } catch {
+      // ignore hydration errors
+    }
+  })();
+
   function loadCache() {
+    if (memCache) return memCache;
     try {
       // Remove superseded EPG cache versions so they don't waste localStorage quota
       ["onair_live_epg_v3", "onair_live_epg_v4", "onair_live_epg_v5", "onair_live_epg_v6"].forEach((oldKey) => {
         if (localStorage.getItem(oldKey) !== null) localStorage.removeItem(oldKey);
       });
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      memCache = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+      return memCache;
     } catch {
-      return {};
+      memCache = {};
+      return memCache;
     }
   }
 
@@ -394,6 +544,12 @@ const ONAIR_LIVE = (() => {
         delete cache[k];
       }
     });
+
+    memCache = cache;
+    if (typeof indexedDB !== "undefined") {
+      persistCompressedIdb("epg_cache", cache, "epgCompressedBytes");
+      return;
+    }
 
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
@@ -1713,7 +1869,7 @@ const ONAIR_LIVE = (() => {
     prevItems.forEach((it) => {
       if (!mergedMap.has(it.id)) mergedMap.set(it.id, it);
     });
-    const merged = Array.from(mergedMap.values()).slice(0, 350);
+    const merged = Array.from(mergedMap.values()).slice(0, 700);
 
     if (merged.length > 0) {
       cache.streaming_vault_v1 = { ts: Date.now(), items: merged };
@@ -1741,7 +1897,7 @@ const ONAIR_LIVE = (() => {
   function parseRssXml(xmlText, src) {
     try {
       const doc = new DOMParser().parseFromString(xmlText, "text/xml");
-      const nodes = Array.from(doc.querySelectorAll("item, entry")).slice(0, 8);
+      const nodes = Array.from(doc.querySelectorAll("item, entry")).slice(0, 15);
       return nodes.map((node) => {
         const title = (node.querySelector("title")?.textContent || "").trim();
         const linkEl = node.querySelector("link");
@@ -1773,7 +1929,7 @@ const ONAIR_LIVE = (() => {
       const apiUrl = "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(src.url);
       const res = await fetchJson(apiUrl);
       if (res && res.status === "ok" && Array.isArray(res.items) && res.items.length > 0) {
-        return res.items.slice(0, 8).map((item) => ({
+        return res.items.slice(0, 15).map((item) => ({
           sourceId: src.id,
           sourceName: src.name,
           sourceColor: src.color,
@@ -1865,8 +2021,10 @@ const ONAIR_LIVE = (() => {
       typeof window !== "undefined" && window.ONAIR_VAULT_DATA && window.ONAIR_VAULT_DATA.shows
         ? window.ONAIR_VAULT_DATA.shows
         : {};
+    if (memVault) return { ...repoShows, ...memVault };
     try {
       const localShows = JSON.parse(localStorage.getItem(VAULT_STORAGE_KEY) || "{}");
+      memVault = localShows;
       return { ...repoShows, ...localShows };
     } catch {
       return { ...repoShows };
@@ -1874,11 +2032,17 @@ const ONAIR_LIVE = (() => {
   }
 
   function saveVault(vault) {
-    // Keep up to 5,000 most recently used/saved shows (~1.2–1.6 MB) within browser ~5 MB localStorage limit
+    // Keep up to 25,000 most recently used/saved shows (gzip-compressed in IndexedDB)
     const entries = Object.entries(vault);
-    let limit = 5000;
+    let limit = typeof indexedDB !== "undefined" ? 25000 : 5000;
     if (entries.length > limit) {
       entries.sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0));
+    }
+    const trimmed = entries.length > limit ? Object.fromEntries(entries.slice(0, limit)) : vault;
+    memVault = trimmed;
+    if (typeof indexedDB !== "undefined") {
+      persistCompressedIdb("show_vault", trimmed, "vaultCompressedBytes");
+      return;
     }
     while (limit >= 500) {
       try {
@@ -1906,7 +2070,9 @@ const ONAIR_LIVE = (() => {
 
     let localShowsCount = 0;
     try {
-      localShowsCount = Object.keys(JSON.parse(localStorage.getItem(VAULT_STORAGE_KEY) || "{}")).length;
+      localShowsCount = memVault
+        ? Object.keys(memVault).length
+        : Object.keys(JSON.parse(localStorage.getItem(VAULT_STORAGE_KEY) || "{}")).length;
     } catch {
       localShowsCount = 0;
     }
@@ -1926,6 +2092,7 @@ const ONAIR_LIVE = (() => {
       totalBytes = 0;
     }
 
+    const idbCompressedBytes = (idbStats.epgCompressedBytes || 0) + (idbStats.vaultCompressedBytes || 0);
     return {
       repoUpdatedAt,
       repoShowsCount,
@@ -1933,7 +2100,9 @@ const ONAIR_LIVE = (() => {
       mergedShowsCount: getVaultStats().showsCached,
       localShowsCount,
       epgDaysCached,
-      totalStorageKb: (totalBytes / 1024).toFixed(1)
+      totalStorageKb: (totalBytes / 1024).toFixed(1),
+      idbCompressedKb: (idbCompressedBytes / 1024).toFixed(1),
+      storageBackend: idbStats.backend
     };
   }
 
@@ -1954,12 +2123,15 @@ const ONAIR_LIVE = (() => {
     const payload = {
       updatedAt: new Date().toISOString(),
       shows: mergedShows,
-      streaming: Array.from(streamingMap.values()).slice(0, 350)
+      streaming: Array.from(streamingMap.values()).slice(0, 700)
     };
     return `window.ONAIR_VAULT_DATA = ${JSON.stringify(payload, null, 2)};\n`;
   }
 
   function clearEpgCache() {
+    memCache = {};
+    idbStats.epgCompressedBytes = 0;
+    idbDelete("epg_cache");
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -1969,6 +2141,9 @@ const ONAIR_LIVE = (() => {
 
   function clearShowVault() {
     showLinkCache.clear();
+    memVault = {};
+    idbStats.vaultCompressedBytes = 0;
+    idbDelete("show_vault");
     try {
       localStorage.removeItem(VAULT_STORAGE_KEY);
     } catch {

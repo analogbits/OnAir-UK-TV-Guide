@@ -1064,19 +1064,19 @@
 
     let combinedPicks = [];
     if (filter === "OnDemand") {
-      combinedPicks = odCandidates.slice(0, 12);
+      combinedPicks = odCandidates.slice(0, 24);
     } else if (filter === "All") {
-      const tvTop = candidates.slice(0, 8).map((c) => ({ kind: "tv", ...c }));
-      const odTop = odCandidates.slice(0, 4);
+      const tvTop = candidates.slice(0, 16).map((c) => ({ kind: "tv", ...c }));
+      const odTop = odCandidates.slice(0, 8);
       const maxLen = Math.max(tvTop.length, odTop.length);
-      for (let i = 0; i < maxLen && combinedPicks.length < 12; i++) {
+      for (let i = 0; i < maxLen && combinedPicks.length < 24; i++) {
         if (tvTop[i]) combinedPicks.push(tvTop[i]);
-        if (odTop[i] && combinedPicks.length < 12) combinedPicks.push(odTop[i]);
+        if (odTop[i] && combinedPicks.length < 24) combinedPicks.push(odTop[i]);
       }
     } else {
-      const tvTop = candidates.slice(0, 9).map((c) => ({ kind: "tv", ...c }));
-      const odTop = odCandidates.slice(0, 3);
-      combinedPicks = [...tvTop, ...odTop].slice(0, 12);
+      const tvTop = candidates.slice(0, 18).map((c) => ({ kind: "tv", ...c }));
+      const odTop = odCandidates.slice(0, 6);
+      combinedPicks = [...tvTop, ...odTop].slice(0, 24);
     }
 
     const dayHeading =
@@ -1186,18 +1186,18 @@
         // Balanced mix across UK TV, Pluto TV, and Tubi
         const mixed = [];
         const maxLen = Math.max(ukLive.length, plutoLive.length, tubiLive.length);
-        for (let i = 0; i < maxLen && mixed.length < 6; i++) {
+        for (let i = 0; i < maxLen && mixed.length < 12; i++) {
           if (ukLive[i]) mixed.push(ukLive[i]);
-          if (plutoLive[i] && mixed.length < 6) mixed.push(plutoLive[i]);
-          if (tubiLive[i] && mixed.length < 6) mixed.push(tubiLive[i]);
+          if (plutoLive[i] && mixed.length < 12) mixed.push(plutoLive[i]);
+          if (tubiLive[i] && mixed.length < 12) mixed.push(tubiLive[i]);
         }
         filteredLive = mixed;
       }
 
       const seasonalCards =
         state.seasonalSourceFilter === "pluto" || state.seasonalSourceFilter === "tubi" || state.seasonalSourceFilter === "uk"
-          ? filteredLive.slice(0, 6)
-          : [...filteredLive.slice(0, 6), ...streamSeasonal.slice(0, 3)].slice(0, 6);
+          ? filteredLive.slice(0, 12)
+          : [...filteredLive.slice(0, 9), ...streamSeasonal.slice(0, 6)].slice(0, 12);
 
       const sourceFilterPills = [
         { id: "all", label: `All (${liveSeasonal.length})` },
@@ -1814,7 +1814,7 @@
       }
     }
 
-    const final = results.slice(0, 8);
+    const final = results.slice(0, 16);
     final.forEach((item) => {
       if (!liveStreamingItems.some((x) => x.id === item.id)) {
         liveStreamingItems.push(item);
@@ -1939,7 +1939,7 @@
         syncBtn.onclick = async () => {
           syncBtn.textContent = "Syncing...";
           syncBtn.disabled = true;
-          const active = getFilteredChannels("All").slice(0, 60);
+          const active = getFilteredChannels("All").slice(0, 120);
           for (let d = 1; d <= 6; d++) {
             await ensureSchedulesForChannels(active, d, false);
           }
@@ -3031,8 +3031,8 @@
             <div class="storage-stat-lbl">EPG Days Cached Locally</div>
           </div>
           <div class="storage-stat-box">
-            <div class="storage-stat-val">${(Number(report.totalStorageKb) / 1024).toFixed(2)} MB <span style="font-size:13px; font-weight:500; color:var(--text-muted);">/ 5.00 MB</span></div>
-            <div class="storage-stat-lbl">Browser localStorage Used</div>
+            <div class="storage-stat-val">${report.idbCompressedKb ? `${(Number(report.idbCompressedKb) / 1024).toFixed(2)} MB` : `${(Number(report.totalStorageKb) / 1024).toFixed(2)} MB`}</div>
+            <div class="storage-stat-lbl">${escapeHtml(report.storageBackend || "IndexedDB (gzip)")} Used</div>
           </div>
         </div>
 
