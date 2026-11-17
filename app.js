@@ -4162,11 +4162,30 @@
 
     let lastTopic = null;
     let lastMatches = null;
+    let lastQueryContext = null;
 
     function addMsg(role, text, actions = []) {
       const div = document.createElement("div");
       div.className = `chat-msg ${role}`;
       div.innerHTML = text;
+      div.querySelectorAll("[data-chat-open-prog]").forEach((link) => {
+        link.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          openProgrammeModal(link.dataset.chatOpenProg, link.dataset.chatOpenCh);
+        });
+      });
+      div.querySelectorAll("[data-chat-open-stream]").forEach((link) => {
+        link.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          openStreamModal(link.dataset.chatOpenStream);
+        });
+      });
+      div.querySelectorAll("[data-chat-jump-ch]").forEach((link) => {
+        link.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          jumpToGuideMatch(link.dataset.chatJumpCh, Number(link.dataset.chatJumpDay || 0), Number(link.dataset.chatJumpMin || 0));
+        });
+      });
       if (actions.length) {
         const actRow = document.createElement("div");
         actRow.className = "chat-msg-actions";
@@ -4184,8 +4203,33 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    function getSmartPicks({ regex = null, catId = null, platId = null, onlyFilms = false, preferTonight = false, dayOffset = 0, limit = 5 } = {}) {
+    function parseChatTimeContext(lower) {
+      let dayOffset = 0;
+      if (/\byesterday\b/i.test(lower)) dayOffset = -1;
+      else if (/\btomorrow\b/i.test(lower)) dayOffset = 1;
+
+      if (/\b(this evening|tonight|primetime|evening)\b/i.test(lower)) {
+        return { mode: "evening", minMin: 18 * 60, maxMin: 24 * 60, dayOffset, label: dayOffset === 1 ? "Tomorrow Evening (18:00–24:00)" : "This Evening (18:00–24:00)" };
+      }
+      if (/\b(this afternoon|afternoon)\b/i.test(lower)) {
+        return { mode: "afternoon", minMin: 12 * 60, maxMin: 18 * 60, dayOffset, label: dayOffset === 1 ? "Tomorrow Afternoon (12:00–18:00)" : "This Afternoon (12:00–18:00)" };
+      }
+      if (/\b(this morning|morning)\b/i.test(lower)) {
+        return { mode: "morning", minMin: 6 * 60, maxMin: 12 * 60, dayOffset, label: dayOffset === 1 ? "Tomorrow Morning (06:00–12:00)" : "This Morning (06:00–12:00)" };
+      }
+      if (/\b(late night|late|overnight|midnight)\b/i.test(lower)) {
+        return { mode: "late", minMin: 22 * 60, maxMin: 24 * 60, dayOffset, label: "Late Night (22:00–00:00)" };
+      }
+      if (dayOffset !== 0) {
+        return { mode: "allday", minMin: 0, maxMin: 24 * 60, dayOffset, label: getDayLabelShort(dayOffset) };
+      }
+      return { mode: "now", minMin: null, maxMin: null, dayOffset: 0, label: "Right Now" };
+    }
+
+    function getSmartPicks({ regex = null, catId = null, platId = null, onlyFilms = false, timeCtx = null, limit = 5 } = {}) {
       const nowMin = getNowMinutes();
+      const tCtx = timeCtx || { mode: "now", minMin: null, maxMin: null, dayOffset: 0, label: "Right Now" };
+      const dayOffset = tCtx.dayOffset || 0;
       const localCache = getCachedStoreForSearch();
       const targetPlat = platId || state.platform;
       const chs = platId
@@ -4195,7 +4239,7 @@
             ...liveChannels.filter((c) => c.numbers[targetPlat] == null)
           ];
       const skipRe = /\b(teleshopping|programmes start at|this is bbc|shop on tv|must have ideas|ideal world|high street - shopping|unwind with itv|alba today)\b/i;
-      const tvCandidates = [];
+      const allMatches = [];
       const seenTitles = new Set();
 
       for (const ch of chs) {
@@ -4203,33 +4247,51 @@
         if (!Array.isArray(progs) || !progs.length) continue;
         for (const p of progs) {
           if (!p || !p.title || skipRe.test(p.title)) continue;
-          if (dayOffset === 0 && p.endMin <= nowMin) continue;
-          const isFilm = p.genre === "Film" || /^film:/i.test(p.title) || /\b(film|movie|cinema|sky (premiere|greats|family|action|comedy|thriller|drama|christmas|scfi)|film4|talkingpictures|great!\s*(movies|christmas|action|mystery)|pluto tv (movies|cult|horror|thrillers|westerns|action|christmas))\b/i.test(ch.name);
+          if (dayOffset === 0 && tCtx.mode === "now" && p.endMin <= nowMin) continue;
+          const isFilm = p.genre === "Film" || /^film:/i.test(p.title) || /\b(film4|talkingpictures|moviesphere|curzon|screen classics|lifetime movies|pluto tv (movies|cult|thrillers|westerns)|sky (premiere|greats|family|action|thriller|drama|christmas|scfi))\b/i.test(ch.name);
           if (onlyFilms && !isFilm) continue;
           const hay = `${p.title} ${p.desc || ""} ${p.genre || ""} ${ch.name}`;
           if (regex && !regex.test(hay)) continue;
           if (!regex && catId && catId !== "All" && !progMatchesCategory(p, catId, ch.name)) continue;
 
-          const cleanKey = p.title.toLowerCase().replace(/[^a-z0-9]/g, "");
-          if (seenTitles.has(cleanKey)) continue;
-          seenTitles.add(cleanKey);
-
           const isOnNow = dayOffset === 0 && nowMin >= p.startMin && nowMin < p.endMin;
-          const isPrime = p.startMin >= 19 * 60 && p.startMin <= 22 * 60 + 30;
+          const isStartingSoon = dayOffset === 0 && p.startMin > nowMin && p.startMin <= nowMin + 90;
+          const inWindow =
+            tCtx.mode === "now"
+              ? isOnNow || isStartingSoon
+              : tCtx.mode === "allday"
+                ? true
+                : p.startMin < tCtx.maxMin && p.endMin > tCtx.minMin && p.startMin >= tCtx.minMin - 30;
+
           let score = 0;
-          if (preferTonight && isPrime) score += 50;
-          else if (!preferTonight && isOnNow) score += 50;
-          else if (p.startMin > nowMin && p.startMin <= nowMin + 180) score += 35;
-          else if (isPrime) score += 25;
+          if (tCtx.mode === "now") {
+            if (isOnNow) score += 80;
+            else if (isStartingSoon) score += 45;
+            else score += Math.max(0, 20 - Math.floor((p.startMin - nowMin) / 60));
+          } else if (inWindow) {
+            score += 65;
+            if (p.startMin >= 20 * 60 && p.startMin <= 22 * 60) score += 15;
+          }
           if (cHasPlatform(ch, targetPlat)) score += 15;
           if (p.isNew || /^New:/i.test(p.title)) score += 12;
           if (isFilm && onlyFilms) score += 15;
 
-          tvCandidates.push({ ch, prog: p, dayOffset, isOnNow, score });
+          allMatches.push({ ch, prog: p, dayOffset, isOnNow, inWindow, score });
         }
       }
 
-      tvCandidates.sort((a, b) => b.score - a.score || a.prog.startMin - b.prog.startMin);
+      allMatches.sort((a, b) => Number(b.inWindow) - Number(a.inWindow) || b.score - a.score || a.prog.startMin - b.prog.startMin);
+      const dedupedTv = [];
+      let fallbackLater = false;
+      for (const item of allMatches) {
+        if (tCtx.mode !== "allday" && !item.inWindow && dedupedTv.some((d) => d.inWindow)) continue;
+        const cleanKey = item.prog.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (seenTitles.has(cleanKey)) continue;
+        seenTitles.add(cleanKey);
+        if (!item.inWindow) fallbackLater = true;
+        dedupedTv.push(item);
+        if (dedupedTv.length >= limit) break;
+      }
 
       const streamCandidates = [];
       getMergedCatalogue().forEach((item) => {
@@ -4244,8 +4306,10 @@
       });
 
       return {
-        tv: tvCandidates.slice(0, limit),
-        stream: streamCandidates.slice(0, 3)
+        tv: dedupedTv,
+        stream: streamCandidates.slice(0, 3),
+        fallbackLater,
+        timeCtx: tCtx
       };
     }
 
@@ -4254,8 +4318,12 @@
     }
 
     function formatPickLine(x) {
-      const tag = x.isOnNow ? `<span style="color:#ef4444;font-weight:700;">LIVE</span>` : formatTime(x.prog.startMin);
-      return `&bull; <strong>${escapeHtml(x.ch.name)}</strong>: ${escapeHtml(x.prog.title)} (${tag})`;
+      const tag = x.isOnNow ? `<span style="color:#ef4444;font-weight:700;">LIVE NOW</span>` : formatTime(x.prog.startMin);
+      return `&bull; <strong>${escapeHtml(x.ch.name)}</strong>: <a href="#" data-chat-open-prog="${escapeHtml(x.prog.id)}" data-chat-open-ch="${escapeHtml(x.ch.id)}" style="color:var(--accent);font-weight:700;text-decoration:underline;">${escapeHtml(x.prog.title)}</a> (${tag}) <a href="#" data-chat-jump-ch="${escapeHtml(x.ch.id)}" data-chat-jump-day="${x.dayOffset}" data-chat-jump-min="${x.prog.startMin}" style="font-size:11px;color:var(--text-muted);text-decoration:none;margin-left:4px;">[Guide &nearr;]</a>`;
+    }
+
+    function formatStreamLine(s) {
+      return `&bull; <strong>${escapeHtml(s.platform)}</strong>: <a href="#" data-chat-open-stream="${escapeHtml(s.id)}" style="color:var(--accent);font-weight:700;text-decoration:underline;">${escapeHtml(s.title)}</a> (${formatStars(s.rating)})`;
     }
 
     async function handleQuery(raw) {
@@ -4361,9 +4429,33 @@
       ];
       const matchedPlat = platMap.find((p) => p.re.test(lower));
 
-      // 2. Detect specific season/holiday or genre/topic intent
+      // 2. Detect time-window context clues & specific season/holiday or genre/topic intent
+      const timeCtx = parseChatTimeContext(lower);
+      const isTimeFollowUpOnly = /^(what about\s+|how about\s+|and\s+)?(right now|on now|now|this morning|morning|this afternoon|afternoon|this evening|evening|tonight|primetime|late|late night|tomorrow|yesterday)\??$/i.test(lower);
+      if (isTimeFollowUpOnly && lastQueryContext) {
+        const picks = getSmartPicks({
+          ...lastQueryContext,
+          timeCtx,
+          limit: 5
+        });
+        const heading = `${lastQueryContext.label} &bull; ${timeCtx.label}`;
+        const lines = [
+          picks.fallbackLater && timeCtx.mode === "now"
+            ? `Nothing live right this minute for <strong>${escapeHtml(lastQueryContext.label)}</strong> &mdash; here is what's coming up next today:`
+            : `<strong>${escapeHtml(heading)}</strong>:`
+        ];
+        if (picks.tv.length) lines.push(picks.tv.map(formatPickLine).join("<br/>"));
+        if (picks.stream.length) lines.push(`<strong>On-Demand Anytime:</strong><br/>` + picks.stream.map(formatStreamLine).join("<br/>"));
+        addMsg("bot", lines.join("<br/><br/>"), [
+          { label: "⚡ Right Now", onClick: () => handleQuery(`${lastQueryContext.rawQuery} right now`) },
+          { label: "☀️ Afternoon", onClick: () => handleQuery(`${lastQueryContext.rawQuery} this afternoon`) },
+          { label: "🌙 This Evening", onClick: () => handleQuery(`${lastQueryContext.rawQuery} this evening`) }
+        ]);
+        return;
+      }
+
       const wantsFilmsOnly = /\b(film|films|movie|movies|cinema)\b/i.test(lower);
-      const wantsTonight = /\b(tonight|evening|primetime|later)\b/i.test(lower);
+      const wantsTonight = timeCtx.mode === "evening";
       const explicitSeason = SEASON_CALENDAR.find((s) => new RegExp(`\\b(${s.id}|${s.searchQuery}|${s.id === "christmas" ? "xmas|festive|santa" : s.id === "halloween" ? "spooky" : s.id})\\b`, "i").test(lower));
 
       const topicMap = [
@@ -4435,84 +4527,63 @@
       else if (/\blate\b/i.test(lower)) hourJump = 22;
       else if (/\b(overnight|midnight)\b/i.test(lower)) hourJump = 0;
 
-      // 6. Handle Seasonal / Christmas / Holiday queries (e.g. "Show me Christmas movies")
+      // 6. Handle Seasonal / Christmas / Holiday queries (e.g. "Show me Christmas movies", "Christmas movies tonight")
       if (explicitSeason) {
+        const label = `${explicitSeason.chip}${wantsFilmsOnly ? " Movies" : " Picks"}`;
+        lastQueryContext = { regex: explicitSeason.regex, onlyFilms: wantsFilmsOnly, label, rawQuery: `${explicitSeason.id}${wantsFilmsOnly ? " movies" : ""}` };
         const picks = getSmartPicks({
           regex: explicitSeason.regex,
           onlyFilms: wantsFilmsOnly,
-          preferTonight: wantsTonight,
-          dayOffset: dayJump || 0,
+          timeCtx,
           limit: 5
         });
         const lines = [
-          `Here are top <strong>${escapeHtml(explicitSeason.chip)}${wantsFilmsOnly ? " Movies" : " Picks"}</strong> on UK TV &amp; Streaming:`
+          picks.fallbackLater && timeCtx.mode === "now"
+            ? `No <strong>${escapeHtml(label)}</strong> on live TV right this minute &mdash; here is what's coming up next today:`
+            : `<strong>${escapeHtml(label)} &bull; ${escapeHtml(timeCtx.label)}</strong>:`
         ];
         if (picks.tv.length) {
           lines.push(picks.tv.map(formatPickLine).join("<br/>"));
         }
         if (picks.stream.length) {
-          lines.push(
-            picks.stream
-              .map((s) => `&bull; <strong>${escapeHtml(s.platform)}</strong>: ${escapeHtml(s.title)} (${formatStars(s.rating)})`)
-              .join("<br/>")
-          );
+          lines.push(`<strong>Stream On-Demand Now:</strong><br/>` + picks.stream.map(formatStreamLine).join("<br/>"));
         }
-        const actions = [];
-        if (picks.tv[0]) {
-          actions.push({
-            label: `Jump to ${picks.tv[0].ch.name}`,
-            onClick: () => jumpToGuideMatch(picks.tv[0].ch.id, picks.tv[0].dayOffset, picks.tv[0].prog.startMin)
-          });
-          actions.push({
-            label: `Details: ${picks.tv[0].prog.title.slice(0, 18)}`,
-            onClick: () => openProgrammeModal(picks.tv[0].prog.id, picks.tv[0].ch.id)
-          });
-        }
-        actions.push({
-          label: `Switch Guide to ${explicitSeason.chip}`,
-          onClick: () => setGuideModeChoice(explicitSeason.id)
-        });
+        const actions = [
+          { label: "⚡ Right Now", onClick: () => handleQuery(`${lastQueryContext.rawQuery} right now`) },
+          { label: "🌙 This Evening", onClick: () => handleQuery(`${lastQueryContext.rawQuery} this evening`) },
+          { label: `Switch Guide to ${explicitSeason.chip}`, onClick: () => setGuideModeChoice(explicitSeason.id) }
+        ];
         addMsg("bot", lines.join("<br/><br/>"), actions);
         return;
       }
 
-      // 7. Handle specific Genre / Topic / Mood queries (e.g. "show me horror", "horror movies", "sci-fi", "comedy tonight")
+      // 7. Handle specific Genre / Topic / Mood queries (e.g. "horror movies", "horror movies this evening", "sci-fi", "comedy tonight")
       if (matchedTopic) {
+        const label = `${matchedTopic.label}${wantsFilmsOnly ? " Movies" : " Shows & Films"}`;
+        const cleanRaw = q.replace(/\b(right now|on now|this morning|morning|this afternoon|afternoon|this evening|evening|tonight|primetime|late|tomorrow|yesterday)\b/gi, "").trim() || matchedTopic.label;
+        lastQueryContext = { regex: matchedTopic.regex, onlyFilms: wantsFilmsOnly, label, rawQuery: cleanRaw };
         const picks = getSmartPicks({
           regex: matchedTopic.regex,
           onlyFilms: wantsFilmsOnly,
-          preferTonight: wantsTonight,
-          dayOffset: dayJump || 0,
+          timeCtx,
           limit: 5
         });
-        const heading = `${matchedTopic.label}${wantsFilmsOnly ? " Movies" : " Shows & Films"}${wantsTonight ? " Tonight" : ""}`;
-        const lines = [`Top <strong>${escapeHtml(heading)}</strong> on TV &amp; Streaming:`];
+        const lines = [
+          picks.fallbackLater && timeCtx.mode === "now"
+            ? `No <strong>${escapeHtml(label)}</strong> airing live right this minute &mdash; here is what's coming up next today:`
+            : `<strong>${escapeHtml(label)} &bull; ${escapeHtml(timeCtx.label)}</strong>:`
+        ];
         if (picks.tv.length) {
           lines.push(picks.tv.map(formatPickLine).join("<br/>"));
         }
         if (picks.stream.length) {
-          lines.push(
-            picks.stream
-              .map((s) => `&bull; <strong>${escapeHtml(s.platform)}</strong>: ${escapeHtml(s.title)} (${formatStars(s.rating)})`)
-              .join("<br/>")
-          );
+          lines.push(`<strong>Stream On-Demand Now:</strong><br/>` + picks.stream.map(formatStreamLine).join("<br/>"));
         }
-        const actions = [];
-        if (picks.tv[0]) {
-          actions.push({
-            label: `Jump to ${picks.tv[0].ch.name}`,
-            onClick: () => jumpToGuideMatch(picks.tv[0].ch.id, picks.tv[0].dayOffset, picks.tv[0].prog.startMin)
-          });
-          actions.push({
-            label: "Open Details",
-            onClick: () => openProgrammeModal(picks.tv[0].prog.id, picks.tv[0].ch.id)
-          });
-        } else if (picks.stream[0]) {
-          actions.push({
-            label: "Open Details",
-            onClick: () => openStreamModal(picks.stream[0].id)
-          });
-        }
+        const actions = [
+          { label: "⚡ Right Now", onClick: () => handleQuery(`${cleanRaw} right now`) },
+          { label: "☀️ This Afternoon", onClick: () => handleQuery(`${cleanRaw} this afternoon`) },
+          { label: "🌙 This Evening", onClick: () => handleQuery(`${cleanRaw} this evening`) }
+        ];
         addMsg("bot", lines.join("<br/><br/>"), actions);
         return;
       }
@@ -4541,23 +4612,23 @@
           if (nextOnes.length) {
             lines.push(
               nextOnes
-                .slice(0, 3)
+                .slice(0, 4)
                 .map((m) => {
                   const bs = getBroadcastStatus(m.prog);
-                  return `<strong>${escapeHtml(m.prog.title)}</strong>${bs ? ` <em>(${bs})</em>` : ""} &bull; ${m.whenLabel} on <strong>${escapeHtml(m.channel.name)}</strong>`;
+                  return `&bull; <a href="#" data-chat-open-prog="${escapeHtml(m.prog.id)}" data-chat-open-ch="${escapeHtml(m.channel.id)}" style="color:var(--accent);font-weight:700;text-decoration:underline;">${escapeHtml(m.prog.title)}</a>${bs ? ` <em>(${bs})</em>` : ""} &bull; ${m.whenLabel} on <strong>${escapeHtml(m.channel.name)}</strong> <a href="#" data-chat-jump-ch="${escapeHtml(m.channel.id)}" data-chat-jump-day="${m.dayOffset}" data-chat-jump-min="${m.prog.startMin}" style="font-size:11px;color:var(--text-muted);text-decoration:none;">[Guide &nearr;]</a>`;
                 })
                 .join("<br/>")
             );
           } else if (pastOnes.length) {
             const last = pastOnes[0];
             lines.push(
-              `No upcoming airings cached for <strong>${escapeHtml(last.prog.title)}</strong>.<br/>` +
+              `No upcoming airings cached for <a href="#" data-chat-open-prog="${escapeHtml(last.prog.id)}" data-chat-open-ch="${escapeHtml(last.channel.id)}" style="color:var(--accent);font-weight:700;text-decoration:underline;">${escapeHtml(last.prog.title)}</a>.<br/>` +
               `${last.whenLabel} on <strong>${escapeHtml(last.channel.name)}</strong>`
             );
           }
           if (streamMatches.length) {
             const s0 = streamMatches[0];
-            lines.push(`Streaming on <strong>${escapeHtml(s0.platform)}</strong>: ${escapeHtml(s0.title)}`);
+            lines.push(`Streaming on <strong>${escapeHtml(s0.platform)}</strong>: <a href="#" data-chat-open-stream="${escapeHtml(s0.id)}" style="color:var(--accent);font-weight:700;text-decoration:underline;">${escapeHtml(s0.title)}</a>`);
           }
 
           const actions = [];
@@ -4646,11 +4717,19 @@
               platId: matchedPlat ? matchedPlat.id : state.platform,
               catId: matchedCat ? matchedCat.id : state.epgCategory,
               onlyFilms: wantsFilmsOnly || (matchedCat && matchedCat.id === "Film"),
-              preferTonight: wantsTonight,
-              dayOffset: state.dayOffset,
+              timeCtx,
               limit: 4
             }).tv
           : [];
+        if (matchedCat) {
+          lastQueryContext = {
+            catId: matchedCat.id,
+            platId: matchedPlat ? matchedPlat.id : null,
+            onlyFilms: wantsFilmsOnly || matchedCat.id === "Film",
+            label: `${matchedPlat ? `${matchedPlat.name} ` : ""}${matchedCat.label}`,
+            rawQuery: `${matchedPlat ? `${matchedPlat.name} ` : ""}${matchedCat.label}`
+          };
+        }
         const previewHtml = preview.length
           ? `<br/><br/>` + preview.map(formatPickLine).join("<br/>")
           : "";
