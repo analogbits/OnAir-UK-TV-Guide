@@ -561,6 +561,8 @@
     if (val === "normal") {
       state.guideMode = "normal";
       localStorage.setItem("onair_guide_mode", "normal");
+      if (state.epgCategory === "Seasonal") state.epgCategory = "All";
+      if (state.nowNextCategory === "Seasonal") state.nowNextCategory = "All";
     } else {
       state.guideMode = "seasonal";
       state.seasonOverride = val || "auto";
@@ -568,7 +570,7 @@
       localStorage.setItem("onair_season_override", state.seasonOverride);
     }
     const season = getActiveSeason();
-    syncGuideModeUI();
+    renderCategoryPills();
     renderWhatToWatch();
     renderStreaming();
     if (el.tmPopover && !el.tmPopover.classList.contains("hidden") && el.timeMachineBtn) {
@@ -703,7 +705,9 @@
 
   function renderCategoryPills() {
     const season = getActiveSeason();
-    const cats = [...CHANNEL_CATEGORIES.slice(0, 2), { id: "Seasonal", label: season.chip }, ...CHANNEL_CATEGORIES.slice(2)];
+    const cats = isSeasonalMode()
+      ? [...CHANNEL_CATEGORIES.slice(0, 2), { id: "Seasonal", label: season.chip }, ...CHANNEL_CATEGORIES.slice(2)]
+      : [...CHANNEL_CATEGORIES];
     syncGuideModeUI();
     el.epgCategoryPills.innerHTML = cats
       .map((item) => {
