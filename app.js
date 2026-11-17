@@ -377,6 +377,20 @@
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  function getTodayIso(offset = 0) {
+    const d = new Date();
+    if (offset !== 0) d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  function getActiveIsoDate() {
+    if (typeof state !== "undefined" && state) {
+      if (state.timeMachineDate) return state.timeMachineDate;
+      if (typeof state.dayOffset === "number") return getTodayIso(state.dayOffset);
+    }
+    return getTodayIso(0);
+  }
+
   const LIVE_FIRST_RUN_RE = /^(live:|breakfast|morning live|good morning britain|lorraine|this morning|loose women|politics live|jeremy vine|sunday with laura kuenssberg|the one show|newsnight|channel 4 news|itv news|itv lunchtime news|itv evening news|bbc news|utv live|stv news|newsline|weather|nations league|match of the day live|six nations live)\b/i;
   const REPEAT_ARCHIVE_CH_RE = /\b(dave|gold|u&drama|u&yesterday|u&w|u&alibi|itv2|itv3|itv4|bbc three|bbc four|more4|e4|4seven|5usa|5star|5select|challenge|sky replay|sky mix|sky comedy|sky max|sky witness|sky sci-fi|legend|talkingpictures|quest|really|dmax|blaze|comedy central)\b/i;
   // Classic/syndicated series that are always repeats unless explicitly tagged "New:"
@@ -396,7 +410,7 @@
 
   function isHistoricRepeatAirDate(airDateIso, currentBroadcastIso) {
     if (!airDateIso || !/^\d{4}-\d{2}-\d{2}$/.test(airDateIso)) return false;
-    const curIso = currentBroadcastIso || (typeof getActiveIsoDate === "function" ? getActiveIsoDate() : null) || getTodayIso();
+    const curIso = currentBroadcastIso || getActiveIsoDate();
     const airYear = Number(airDateIso.slice(0, 4));
     const curYear = Number(curIso.slice(0, 4));
     // If first aired in an earlier calendar year -> definite historic repeat
@@ -413,7 +427,7 @@
     const title = String(prog.title || "").trim();
     const desc = String(prog.desc || "").trim();
     const chName = ch && ch.name ? String(ch.name) : "";
-    const activeIso = typeof getActiveIsoDate === "function" ? getActiveIsoDate() : getTodayIso();
+    const activeIso = getActiveIsoDate();
 
     // 1. Explicit New markers in title, synopsis, or TVMaze/Sky flags
     if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
@@ -5630,7 +5644,7 @@
 
     const criticalIds = [
       "helpGuideBtn",
-      "guideModeToggleBtn",
+      "headerGuideModeSelect",
       "themeToggleBtn",
       "liveRefreshBtn",
       "watchlistBtn",
@@ -5822,9 +5836,9 @@
             return;
           }
 
-          if (target.id === "guideModeToggleBtn") {
+          if (target.id === "headerGuideModeSelect" || target.id === "guideModeToggleBtn") {
             if (before.guideMode === after.guideMode) {
-              uiDebug("error", "UI Failure", `Guide mode button clicked but mode remained "${after.guideMode}"`, ms);
+              uiDebug("error", "UI Failure", `Guide mode selector changed but mode remained "${after.guideMode}"`, ms);
             } else {
               uiDebug("ui", "GuideMode", `Switched mode: ${before.guideMode} -> ${after.guideMode}`, ms);
             }
