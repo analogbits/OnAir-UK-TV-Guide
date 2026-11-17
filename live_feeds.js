@@ -168,10 +168,14 @@ const ONAIR_LIVE = (() => {
           let firstShown = null;
 
           if (/^\d{4}-\d{2}-\d{2}$/.test(availIso)) {
-            if (availIso < isoDate) {
+            const availYear = Number(availIso.slice(0, 4));
+            const curYear = Number(isoDate.slice(0, 4));
+            const diffDays = Math.round((new Date(`${isoDate}T00:00:00Z`) - new Date(`${availIso}T00:00:00Z`)) / 86400000);
+            if (availYear < curYear || diffDays >= 30) {
               isRepeat = true;
               firstShown = availIso;
-            } else if (availIso === isoDate) {
+            } else if (diffDays >= 0 && diffDays < 30) {
+              // Current first-run series premiere / iPlayer linear window (e.g. Ep 2 airing 1-7 days after premiere)
               isFirstRun = true;
             }
           }
@@ -1665,7 +1669,7 @@ const ONAIR_LIVE = (() => {
                 (fvHit && fvHit.isRepeat) ||
                 tvmOtherEpToday ||
                 isSameDayChannelRepeat ||
-                /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b/i.test(ev.sy || "") ||
+                /\b\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b/i.test(ev.sy || "") ||
                 /\(R\)|\brepeat\b/i.test(rawTitle)
               );
 

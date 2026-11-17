@@ -394,11 +394,26 @@
     }
   }
 
+  function isHistoricRepeatAirDate(airDateIso, currentBroadcastIso) {
+    if (!airDateIso || !/^\d{4}-\d{2}-\d{2}$/.test(airDateIso)) return false;
+    const curIso = currentBroadcastIso || (typeof getActiveIsoDate === "function" ? getActiveIsoDate() : null) || getTodayIso();
+    const airYear = Number(airDateIso.slice(0, 4));
+    const curYear = Number(curIso.slice(0, 4));
+    // If first aired in an earlier calendar year -> definite historic repeat
+    if (airYear < curYear) return true;
+    // If within the same calendar year, must be at least 30 days prior to the broadcast
+    // Any air date within 30 days is part of the ongoing first-run series / premiere run (e.g. S1 Ep 2)
+    const diffMs = new Date(`${curIso}T00:00:00Z`).getTime() - new Date(`${airDateIso}T00:00:00Z`).getTime();
+    const diffDays = Math.round(diffMs / 86400000);
+    return diffDays >= 30;
+  }
+
   function getBroadcastStatus(prog, ch = null) {
     if (!prog) return "";
     const title = String(prog.title || "").trim();
     const desc = String(prog.desc || "").trim();
     const chName = ch && ch.name ? String(ch.name) : "";
+    const activeIso = typeof getActiveIsoDate === "function" ? getActiveIsoDate() : getTodayIso();
 
     // 1. Explicit New markers in title, synopsis, or TVMaze/Sky flags
     if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
@@ -408,14 +423,21 @@
       return "New";
     }
 
-    // 2. Authoritative Repeat flag from Freeview UK (start_of_availability < broadcast date), TVMaze UK, or explicit (R)
-    if (prog.isRepeat || prog.firstShown || /\(R\)|\brepeat(ed)?\b|\banother chance to see\b|\bfirst shown\b|\boriginally broadcast\b/i.test(`${title} ${desc}`)) {
-      return "Repeat";
-    }
-
-    // 3. Authoritative First-Run flag from Freeview UK (start_of_availability === broadcast date)
+    // 2. Authoritative First-Run flag from Freeview UK / current premiere run
     if (prog.isFirstRunToday) {
       return "";
+    }
+
+    // 3. Repeat flag: explicit broadcaster tag, or verified historic air date (>= 30 days ago or previous calendar year)
+    const hasBroadcasterRepeatTag = /\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b/i.test(desc) || /\(R\)/i.test(title);
+    const hasHistoricAirDate = prog.firstShown ? isHistoricRepeatAirDate(prog.firstShown, activeIso) : false;
+
+    if (prog.isRepeat || hasHistoricAirDate || hasBroadcasterRepeatTag) {
+      // Safety guard: if firstShown is within 30 days, or show is tagged Series 1 with episode fraction (e.g. 1/4, 2/4) in current year, do not mark as Repeat
+      if (prog.firstShown && !hasHistoricAirDate) {
+        return "";
+      }
+      return "Repeat";
     }
 
     // 4. Live news, weather, live sport & live daytime magazine shows are never repeats
@@ -3055,20 +3077,20 @@
     const starInfo = getEditorialStarInfo(prog, ch);
     const bStatus = getBroadcastStatus(prog, ch);
     const isRep = bStatus === "Repeat";
-    const descWithR = isRep && !/\(R\)/i.test(prog.desc || "") ? `${prog.desc} (R)` : prog.desc;
+    const displayDesc = prog.desc;
     const otherAirings = findOtherAiringsForProgramme(prog, ch.id);
     const otherAiringsHtml = otherAirings.length
       ? `
         <div style="margin:12px 0 14px; padding:10px 12px; border-radius:10px; border:1px solid var(--border-subtle); background:var(--bg-surface-alt);">
           <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:6px;">
-            🔁 Repeat &amp; Other Broadcast Airings (${otherAirings.length})
+            📅 Other Broadcast Airings &amp; Episodes (${otherAirings.length})
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px;">
             ${otherAirings
               .map(
                 (a) => `
                 <button type="button" class="pill-btn" data-other-air-prog="${escapeHtml(a.prog.id)}" data-other-air-ch="${escapeHtml(a.ch.id)}" data-other-air-day="${a.dayOffset}" style="font-size:11.5px; padding:4px 10px;">
-                  <strong>${escapeHtml(a.ch.name)}</strong> &bull; ${escapeHtml(getDayLabelShort(a.dayOffset))} ${formatTime(a.prog.startMin)} ${a.status === "Repeat" ? '<span class="repeat-inline-mark">(R)</span>' : a.status === "New" ? '<span class="mini-tag live">NEW</span>' : ""}
+                  <strong>${escapeHtml(a.ch.name)}</strong> &bull; ${escapeHtml(getDayLabelShort(a.dayOffset))} ${formatTime(a.prog.startMin)} ${a.prog.ep && a.prog.ep !== prog.ep ? `<span style="opacity:0.8;">(${escapeHtml(a.prog.ep)})</span> ` : ""}${a.status === "Repeat" ? '<span class="repeat-inline-mark">(R)</span>' : a.status === "New" ? '<span class="mini-tag live">NEW</span>' : ""}
                 </button>
               `
               )
@@ -3090,16 +3112,16 @@
             ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
             <span id="modalKickerStatusBadge">${bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat showing">REPEAT (R)</span>` : ""}</span>
           </div>
-          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
+          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span id="modalTitleRepeatMark" class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
           <div class="modal-meta-line">
             <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
             <span>&bull; ${prog.ep}</span>
-            <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown ? ` · First shown ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
+            <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown && isHistoricRepeatAirDate(prog.firstShown, activeIsoDate) ? ` · First shown ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
             ${prog.stars ? `<span class="star-rating">&bull; ${formatStars(prog.stars)}</span>` : ""}
           </div>
         </div>
       </div>
-      <p class="modal-synopsis">${descWithR}</p>
+      <p class="modal-synopsis">${escapeHtml(displayDesc)}</p>
       ${otherAiringsHtml}
       <div id="modalReviewsBar" class="reviews-bar">${renderReviewsBar(prog.title)}</div>
       <div class="modal-info-grid">
@@ -3152,7 +3174,7 @@
           if (!epData || !epData.airdate) return;
           const modalTitleEl = document.getElementById("modalTitle");
           if (!modalTitleEl || (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) !== prog.title) return;
-          if (epData.airdate < activeIsoDate) {
+          if (isHistoricRepeatAirDate(epData.airdate, activeIsoDate)) {
             prog.firstShown = epData.airdate;
             prog.isRepeat = true;
             const stEl = document.getElementById("modalBroadcastStatus");
@@ -3163,8 +3185,21 @@
             if (kbEl && !prog.isNew) {
               kbEl.innerHTML = `<span class="mini-tag repeat-tag" title="First aired ${escapeHtml(epData.airdate)}">REPEAT (R)</span>`;
             }
-          } else if (epData.airdate === activeIsoDate && !prog.isRepeat) {
+          } else {
+            // Airdate is recent (<30 days, current series broadcast run or iPlayer drop) -> NOT a repeat!
+            prog.isRepeat = false;
             prog.isFirstRunToday = true;
+            prog.firstShown = null;
+            const stEl = document.getElementById("modalBroadcastStatus");
+            if (stEl) {
+              stEl.innerHTML = `&bull; <strong>✨ Brand New</strong>`;
+            }
+            const kbEl = document.getElementById("modalKickerStatusBadge");
+            if (kbEl) {
+              kbEl.innerHTML = `<span class="mini-tag live">NEW</span>`;
+            }
+            const titleRepMark = document.getElementById("modalTitleRepeatMark");
+            if (titleRepMark) titleRepMark.remove();
           }
         })
         .catch(() => {});
