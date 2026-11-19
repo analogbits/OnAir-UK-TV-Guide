@@ -3747,20 +3747,20 @@
     return full;
   }
 
-  function openChannelViewerModal(channelId) {
+  function openChannelViewerModal(channelId, restoreState = null) {
     const ch = getChannelById(channelId);
     if (!ch) return;
 
     const viewer = {
       id: `${ch.id}-${Date.now()}`,
       ch,
-      minDay: -7,
-      maxDay: 7,
+      minDay: restoreState && typeof restoreState.minDay === "number" ? restoreState.minDay : -7,
+      maxDay: restoreState && typeof restoreState.maxDay === "number" ? restoreState.maxDay : 7,
       minLimit: -30,
       maxLimit: 14,
-      activeDay: 0,
-      query: "",
-      hideRepeats: false,
+      activeDay: restoreState && typeof restoreState.activeDay === "number" ? restoreState.activeDay : 0,
+      query: (restoreState && restoreState.query) || "",
+      hideRepeats: Boolean(restoreState && restoreState.hideRepeats),
       queue: [],
       processing: false,
       extending: false,
@@ -4131,9 +4131,18 @@
 
     renderViewerDayStrip();
     renderViewerDays(false);
-    // Scroll straight to Today / Right Now on open
+    // Restore previous scroll position if returning from a programme modal, otherwise scroll to Today / Right Now
+    const searchInpInit = document.getElementById("chViewerSearch");
+    if (searchInpInit && viewer.query) searchInpInit.value = viewer.query;
+    const hideRepInit = document.getElementById("chViewerHideRep");
+    if (hideRepInit && viewer.hideRepeats) hideRepInit.checked = true;
     requestAnimationFrame(() => {
-      scrollViewerToDay(0, true);
+      const wrap = document.getElementById("chViewerListWrap");
+      if (restoreState && typeof restoreState.scrollTop === "number" && wrap) {
+        wrap.scrollTop = restoreState.scrollTop;
+      } else {
+        scrollViewerToDay(viewer.activeDay, viewer.activeDay === 0);
+      }
       viewer.scrolledToNow = true;
     });
 
@@ -4234,7 +4243,7 @@
       }, { passive: true });
     }
 
-    // Clicking any programme inside the Channel Viewer opens its full Programme Detail Modal
+    // Clicking any programme inside the Channel Viewer opens its full Programme Detail Modal with a Back button
     const viewerRoot = el.modalBody.querySelector(".ch-viewer-wrap");
     if (viewerRoot) {
       viewerRoot.addEventListener("click", (e) => {
@@ -4242,12 +4251,22 @@
         if (!progBtn) return;
         const pid = progBtn.dataset.chvProg;
         const pDay = Number(progBtn.dataset.chvDay || 0);
-        openProgrammeModal(pid, ch.id, pDay);
+        const returnSnap = {
+          channelId: ch.id,
+          channelName: ch.name,
+          activeDay: viewer.activeDay,
+          minDay: viewer.minDay,
+          maxDay: viewer.maxDay,
+          query: viewer.query,
+          hideRepeats: viewer.hideRepeats,
+          scrollTop: listWrap ? listWrap.scrollTop : 0
+        };
+        openProgrammeModal(pid, ch.id, pDay, returnSnap);
       });
     }
   }
 
-  function openProgrammeModal(progId, channelId, progDayOffset) {
+  function openProgrammeModal(progId, channelId, progDayOffset, returnToChannel = null) {
     const ch = getChannelById(channelId);
     const prog = findProgrammeById(progId, channelId, progDayOffset);
     if (!ch || !prog) return;
@@ -4288,7 +4307,16 @@
       `
       : "";
 
+    const backToChannelHtml = returnToChannel
+      ? `<div style="margin-bottom:10px; padding-right:34px;">
+           <button id="modalBackToChannelBtn" type="button" class="ghost-btn" style="padding:5px 12px; font-size:12px; font-weight:700;">
+             &larr; Back to ${escapeHtml(returnToChannel.channelName)} Schedule
+           </button>
+         </div>`
+      : "";
+
     el.modalBody.innerHTML = `
+      ${backToChannelHtml}
       <div id="modalHeaderWrap" class="${prog.image ? "modal-header-with-poster" : ""}">
         ${prog.image ? `<img class="modal-poster" src="${prog.image}" alt="${prog.title}" />` : ""}
         <div>
@@ -4340,9 +4368,14 @@
       <div id="modalSimilarWrap"></div>
     `;
 
+    const backToChBtn = document.getElementById("modalBackToChannelBtn");
+    if (backToChBtn && returnToChannel) {
+      backToChBtn.onclick = () => openChannelViewerModal(returnToChannel.channelId, returnToChannel);
+    }
+
     el.modalBody.querySelectorAll("[data-other-air-prog]").forEach((btn) => {
       btn.onclick = () => {
-        openProgrammeModal(btn.dataset.otherAirProg, btn.dataset.otherAirCh, Number(btn.dataset.otherAirDay || 0));
+        openProgrammeModal(btn.dataset.otherAirProg, btn.dataset.otherAirCh, Number(btn.dataset.otherAirDay || 0), returnToChannel);
       };
     });
 
