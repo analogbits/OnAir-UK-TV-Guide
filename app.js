@@ -27,6 +27,16 @@
     }
   });
 
+  // Continuous EPG configuration
+  const epgContinuous = {
+    startDay: -1, // Yesterday (-1)
+    endDay: 2,    // Day +2 (Yesterday, Today, Tomorrow, Day +2 = 4 consecutive days)
+    maxDay: 6,    // Up to Day +6 (full 7-day UK TV guide)
+    minDay: -7,
+    initialScrolled: false,
+    extending: false
+  };
+
   // Persistent State
   const state = {
     view: "epg",
@@ -1017,13 +1027,51 @@
   // ========================================================================
   // EPG Grid Rendering
   // ========================================================================
+  function formatDayShort(offset) {
+    if (offset === -1) return "Yesterday";
+    if (offset === 0) return "Today";
+    if (offset === 1) return "Tomorrow";
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(d);
+  }
+
   function renderEPG(triggerFetch = true) {
     const nowMin = getNowMinutes();
     const platformChannels = getFilteredChannels("All");
+
+    // Continuous day range:
+    // If time machine is active, we only render that single archive day
+    const isSingleDay = Boolean(state.timeMachineDate);
+    const dayOffsets = [];
+    if (isSingleDay) {
+      dayOffsets.push(state.dayOffset);
+    } else {
+      // Ensure state.dayOffset is within range
+      if (state.dayOffset < epgContinuous.startDay) epgContinuous.startDay = Math.max(-7, state.dayOffset);
+      if (state.dayOffset > epgContinuous.endDay) epgContinuous.endDay = Math.min(epgContinuous.maxDay, state.dayOffset);
+      for (let d = epgContinuous.startDay; d <= epgContinuous.endDay; d++) {
+        dayOffsets.push(d);
+      }
+    }
+
+    const startDay = dayOffsets[0];
+    const totalDays = dayOffsets.length;
+
     if (triggerFetch) {
       const toFetch = state.epgCategory === "Favorites" ? getFilteredChannels("Favorites") : platformChannels;
+      // Fetch current/Today first for instant responsiveness
       ensureSchedulesForChannels(toFetch, state.dayOffset);
+      if (!isSingleDay) {
+        // Fetch adjacent days in the continuous range smoothly in the background
+        dayOffsets.forEach((d) => {
+          if (d !== state.dayOffset) {
+            ensureSchedulesForChannels(toFetch, d);
+          }
+        });
+      }
     }
+
     let channels = filterChannelsByCurrentProgramme(platformChannels, state.epgCategory, state.dayOffset, nowMin);
     if (state.epgChannelQuery) {
       const cq = state.epgChannelQuery.toLowerCase().trim();
@@ -1044,16 +1092,29 @@
     if (el.epgGrid) {
       el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
     }
-    const totalMinutes = (END_HOUR - START_HOUR) * 60;
-    const trackWidth = totalMinutes * PIXELS_PER_MIN;
+
+    const dayWidth = 1440 * PIXELS_PER_MIN;
+    const trackWidth = totalDays * dayWidth;
     const tickWidth = 30 * PIXELS_PER_MIN;
 
     // Time Header
     let ticksHtml = "";
-    for (let m = START_HOUR * 60; m < END_HOUR * 60; m += 30) {
-      const isHour = m % 60 === 0;
-      ticksHtml += `<div class="epg-time-tick ${isHour ? "is-hour" : ""}" style="width:${tickWidth}px;">${formatTime(m)}</div>`;
-    }
+    dayOffsets.forEach((d) => {
+      const dayLabel = formatDayShort(d);
+      const badgeClass = d === 0 ? "is-today" : d < 0 ? "is-past" : "is-future";
+      for (let m = 0; m < 1440; m += 30) {
+        const isHour = m % 60 === 0;
+        if (m === 0) {
+          ticksHtml += `
+            <div class="epg-time-tick is-hour is-day-start" style="width:${tickWidth}px;">
+              <span class="day-marker-badge ${badgeClass}">${escapeHtml(dayLabel)}</span> 00:00
+            </div>
+          `;
+        } else {
+          ticksHtml += `<div class="epg-time-tick ${isHour ? "is-hour" : ""}" style="width:${tickWidth}px;">${formatTime(m)}</div>`;
+        }
+      }
+    });
 
     let rowsHtml = "";
     if (channels.length === 0) {
@@ -1061,60 +1122,70 @@
     } else {
       rowsHtml = channels
         .map((ch) => {
-          const rawProgs = getSchedule(ch.id, state.dayOffset);
-          const progs = Array.isArray(rawProgs) && state.hideTeleshopping
-            ? rawProgs.filter((p) => !/\b(teleshopping|shop on tv|ideal world|qvc|paid programming|infomercial)\b/i.test(p.title || ""))
-            : rawProgs;
           const isFav = state.favorites.has(ch.id);
           const chNum = ch.numbers[state.platform];
 
           let progsHtml = "";
-          if (progs === null) {
-            progsHtml = `<div style="padding:26px 20px; font-size:12px; color:var(--text-muted);">Fetching live schedule...</div>`;
-          } else if (progs.length === 0) {
-            progsHtml = state.timeMachineDate
-              ? `<div style="padding:22px 20px; font-size:12px; color:var(--text-muted);">No archive data for ${escapeHtml(ch.name)} on ${escapeHtml(state.timeMachineDate)} &mdash; <a href="https://tv24.co.uk/tv/${escapeHtml(state.timeMachineDate)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent); font-weight:600; text-decoration:none;">View full day on tv24.co.uk &nearr;</a></div>`
-              : `<div style="padding:26px 20px; font-size:12px; color:var(--text-muted);">No broadcast data published for this channel today.</div>`;
-          } else {
-            progsHtml = progs
-              .map((p) => {
-                const left = (p.startMin - START_HOUR * 60) * PIXELS_PER_MIN;
-                const width = Math.max((p.endMin - p.startMin) * PIXELS_PER_MIN - 3, 40);
-                const isToday = state.dayOffset === 0;
-                const isLive = isToday && nowMin >= p.startMin && nowMin < p.endMin;
-                const isPast = isToday && nowMin >= p.endMin;
-                const starInfo = getEditorialStarInfo(p, ch);
-                const starHtml = starInfo
-                  ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
-                  : "";
-                const bStatus = getBroadcastStatus(p, ch);
-                const isRep = bStatus === "Repeat";
-                const rSuffix = isRep && !/\(R\)/i.test(p.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : "";
-                const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title}${isRep && !/\(R\)/i.test(p.title || "") ? " (R)" : bStatus === "New" ? " (NEW)" : ""} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
+          dayOffsets.forEach((d) => {
+            const dayIndex = d - startDay;
+            const dayStartPx = dayIndex * dayWidth;
+            const rawProgs = getSchedule(ch.id, d);
+            const progs = Array.isArray(rawProgs) && state.hideTeleshopping
+              ? rawProgs.filter((p) => !/\b(teleshopping|shop on tv|ideal world|qvc|paid programming|infomercial)\b/i.test(p.title || ""))
+              : rawProgs;
 
-                return `
-                  <button
-                    class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}"
-                    style="left:${left}px; width:${width}px; --prog-w:${width}px;"
-                    data-genre="${p.genre}"
-                    data-prog-id="${p.id}"
-                    data-channel-id="${ch.id}"
-                    title="${escapeHtml(hoverTitle)}"
-                    type="button"
-                  >
-                    <div class="prog-top-row">
-                      <span class="prog-title">${starHtml}${p.title}${rSuffix}</span>
-                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat broadcast">R</span>` : ""}
-                    </div>
-                    <div class="prog-bottom-row">
-                      <span class="prog-time">${formatTime(p.startMin)}–${formatTime(p.endMin)}</span>
-                      <span>&bull; ${p.genre}</span>
-                    </div>
-                  </button>
-                `;
-              })
-              .join("");
-          }
+            if (progs === null) {
+              const dLabel = formatDayShort(d);
+              progsHtml += `<div class="epg-day-placeholder" style="left:${dayStartPx}px; width:${dayWidth}px;">Fetching ${escapeHtml(dLabel)} schedule...</div>`;
+            } else if (progs.length === 0) {
+              const emptyMsg = state.timeMachineDate
+                ? `No archive data for ${escapeHtml(ch.name)} on ${escapeHtml(state.timeMachineDate)}`
+                : `No broadcast schedule published for ${escapeHtml(formatDayShort(d))}`;
+              progsHtml += `<div class="epg-day-placeholder is-empty" style="left:${dayStartPx}px; width:${dayWidth}px;">${emptyMsg}</div>`;
+            } else {
+              progsHtml += progs
+                .map((p) => {
+                  const pStart = Math.max(0, p.startMin);
+                  const pEnd = Math.min(1440, Math.max(pStart + 5, p.endMin));
+                  const left = dayStartPx + (pStart * PIXELS_PER_MIN);
+                  const width = Math.max((pEnd - pStart) * PIXELS_PER_MIN - 3, 40);
+                  const isToday = d === 0;
+                  const isLive = isToday && nowMin >= p.startMin && nowMin < p.endMin;
+                  const isPast = (d < 0) || (isToday && nowMin >= p.endMin);
+                  const starInfo = getEditorialStarInfo(p, ch);
+                  const starHtml = starInfo
+                    ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
+                    : "";
+                  const bStatus = getBroadcastStatus(p, ch);
+                  const isRep = bStatus === "Repeat";
+                  const rSuffix = isRep && !/\(R\)/i.test(p.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : "";
+                  const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title}${isRep && !/\(R\)/i.test(p.title || "") ? " (R)" : bStatus === "New" ? " (NEW)" : ""} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
+
+                  return `
+                    <button
+                      class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}"
+                      style="left:${left}px; width:${width}px; --prog-w:${width}px;"
+                      data-genre="${p.genre}"
+                      data-prog-id="${p.id}"
+                      data-channel-id="${ch.id}"
+                      data-prog-day="${d}"
+                      title="${escapeHtml(hoverTitle)}"
+                      type="button"
+                    >
+                      <div class="prog-top-row">
+                        <span class="prog-title">${starHtml}${p.title}${rSuffix}</span>
+                        ${isLive ? `<span class="mini-tag live">LIVE</span>` : bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat broadcast">R</span>` : ""}
+                      </div>
+                      <div class="prog-bottom-row">
+                        <span class="prog-time">${formatTime(p.startMin)}–${formatTime(p.endMin)}</span>
+                        <span>&bull; ${p.genre}</span>
+                      </div>
+                    </button>
+                  `;
+                })
+                .join("");
+            }
+          });
 
           return `
             <div class="epg-row">
@@ -1141,12 +1212,27 @@
         .join("");
     }
 
+    // Day boundary vertical divider lines between days
+    let dayBoundariesHtml = "";
+    if (totalDays > 1) {
+      dayOffsets.forEach((d) => {
+        const dayIndex = d - startDay;
+        if (dayIndex > 0) {
+          const boundaryLeftPx = dayIndex * dayWidth;
+          dayBoundariesHtml += `<div class="epg-day-boundary" style="left:calc(var(--epg-channel-col) + ${boundaryLeftPx}px);"></div>`;
+        }
+      });
+    }
+
     // Current time vertical line (only on Today)
     let nowLineHtml = "";
-    if (state.dayOffset === 0 && nowMin >= START_HOUR * 60 && nowMin <= END_HOUR * 60) {
-      const nowOffsetPx = (nowMin - START_HOUR * 60) * PIXELS_PER_MIN;
+    if (dayOffsets.includes(0) && nowMin >= 0 && nowMin <= 1440) {
+      const todayIndex = 0 - startDay;
+      const nowOffsetPx = (todayIndex * dayWidth) + (nowMin * PIXELS_PER_MIN);
       nowLineHtml = `<div class="epg-now-line" style="left:calc(var(--epg-channel-col) + ${nowOffsetPx}px);"></div>`;
     }
+
+    const prevScrollLeft = el.epgScrollContainer ? el.epgScrollContainer.scrollLeft : null;
 
     el.epgGrid.innerHTML = `
       <div class="epg-time-header">
@@ -1154,17 +1240,119 @@
         <div class="epg-time-slots" style="width:${trackWidth}px;">${ticksHtml}</div>
       </div>
       ${rowsHtml}
+      ${dayBoundariesHtml}
       ${nowLineHtml}
     `;
+
+    if (prevScrollLeft !== null && prevScrollLeft > 0) {
+      el.epgScrollContainer.scrollLeft = prevScrollLeft;
+    } else if (!epgContinuous.initialScrolled) {
+      epgContinuous.initialScrolled = true;
+      requestAnimationFrame(() => scrollEpgToHour("now"));
+    }
   }
 
   function scrollEpgToHour(hourVal) {
-    const targetMinutes = hourVal === "now" ? getNowMinutes() : Number(hourVal) * 60;
-    const offsetMinutes = Math.max(0, targetMinutes - START_HOUR * 60 - 45);
+    if (state.timeMachineDate) {
+      const targetMinutes = hourVal === "now" ? getNowMinutes() : Number(hourVal) * 60;
+      const offsetMinutes = Math.max(0, targetMinutes - 45);
+      el.epgScrollContainer.scrollTo({
+        left: offsetMinutes * PIXELS_PER_MIN,
+        behavior: "smooth"
+      });
+      return;
+    }
+
+    let targetDay = state.dayOffset;
+    let targetMinInDay = 0;
+
+    if (hourVal === "now") {
+      targetDay = 0;
+      targetMinInDay = Math.max(0, getNowMinutes() - 45);
+    } else {
+      targetMinInDay = Math.max(0, Number(hourVal) * 60 - 45);
+    }
+
+    if (targetDay < epgContinuous.startDay) epgContinuous.startDay = targetDay;
+    if (targetDay > epgContinuous.endDay) epgContinuous.endDay = targetDay;
+
+    const dayIndex = targetDay - epgContinuous.startDay;
+    const totalTargetMin = (dayIndex * 1440) + targetMinInDay;
+
     el.epgScrollContainer.scrollTo({
-      left: offsetMinutes * PIXELS_PER_MIN,
+      left: totalTargetMin * PIXELS_PER_MIN,
       behavior: "smooth"
     });
+  }
+
+  function scrollToDayOffset(targetDay, hourOffset = 0) {
+    if (state.timeMachineDate) {
+      exitTimeMachine();
+    }
+    let needsRender = false;
+    if (targetDay > epgContinuous.endDay) {
+      epgContinuous.endDay = Math.min(epgContinuous.maxDay, targetDay + 1);
+      needsRender = true;
+    }
+    if (targetDay < epgContinuous.startDay) {
+      epgContinuous.startDay = Math.max(-7, targetDay);
+      needsRender = true;
+    }
+
+    state.dayOffset = targetDay;
+    renderDateStrip();
+
+    if (needsRender) {
+      renderEPG(true);
+    }
+
+    requestAnimationFrame(() => {
+      const dayIndex = targetDay - epgContinuous.startDay;
+      const targetMin = (dayIndex * 1440) + (targetDay === 0 && hourOffset === 0 ? Math.max(0, getNowMinutes() - 45) : hourOffset * 60);
+      el.epgScrollContainer.scrollTo({
+        left: targetMin * PIXELS_PER_MIN,
+        behavior: "smooth"
+      });
+    });
+  }
+
+  let epgScrollerInitialized = false;
+  function initContinuousEpgScroller() {
+    if (epgScrollerInitialized || !el.epgScrollContainer) return;
+    epgScrollerInitialized = true;
+
+    el.epgScrollContainer.addEventListener("scroll", () => {
+      if (state.view !== "epg" || state.timeMachineDate) return;
+
+      const scrollLeft = el.epgScrollContainer.scrollLeft;
+      const clientWidth = el.epgScrollContainer.clientWidth;
+      const scrollWidth = el.epgScrollContainer.scrollWidth;
+
+      // Calculate which day is predominantly in view
+      const currentMin = (scrollLeft + 350) / PIXELS_PER_MIN;
+      const dayIndex = Math.floor(currentMin / 1440);
+      const activeDay = epgContinuous.startDay + dayIndex;
+
+      if (activeDay !== state.dayOffset && activeDay >= -7 && activeDay <= 6) {
+        state.dayOffset = activeDay;
+        el.dateStrip.querySelectorAll(".date-btn").forEach((btn) => {
+          const bDay = Number(btn.dataset.day);
+          btn.classList.toggle("is-active", bDay === activeDay);
+        });
+        const activeBtn = el.dateStrip.querySelector(`.date-btn[data-day="${activeDay}"]`);
+        if (activeBtn && activeBtn.scrollIntoView) {
+          activeBtn.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+        }
+      }
+
+      // Auto-extend timeline when scrolling near right edge
+      if (scrollLeft + clientWidth >= scrollWidth - 2500 && epgContinuous.endDay < epgContinuous.maxDay && !epgContinuous.extending) {
+        epgContinuous.extending = true;
+        epgContinuous.endDay = Math.min(epgContinuous.maxDay, epgContinuous.endDay + 2);
+        renderEPG(true);
+        setTimeout(() => { epgContinuous.extending = false; }, 400);
+      }
+    }, { passive: true });
   }
 
   // ========================================================================
@@ -2243,10 +2431,16 @@
     renderPlatformPills();
     renderCategoryPills();
     renderDateStrip();
+    if (dayOffset < epgContinuous.startDay) epgContinuous.startDay = Math.max(-7, dayOffset);
+    if (dayOffset > epgContinuous.endDay) epgContinuous.endDay = Math.min(epgContinuous.maxDay, dayOffset + 1);
     renderEPG(true);
     requestAnimationFrame(() => {
-      const hour = Math.max(0, Math.floor((startMin || 0) / 60));
-      scrollEpgToHour(dayOffset === 0 ? "now" : hour);
+      const dayIndex = dayOffset - epgContinuous.startDay;
+      const targetMin = (dayIndex * 1440) + Math.max(0, (startMin || 0) - 45);
+      el.epgScrollContainer.scrollTo({
+        left: targetMin * PIXELS_PER_MIN,
+        behavior: "smooth"
+      });
     });
   }
 
@@ -3077,16 +3271,18 @@
     return out;
   }
 
-  function openProgrammeModal(progId, channelId) {
+  function openProgrammeModal(progId, channelId, progDayOffset) {
     const ch = liveChannels.find((c) => c.id === channelId);
     const prog = findProgrammeById(progId, channelId);
     if (!ch || !prog) return;
 
+    const resolvedDayOffset = progDayOffset !== undefined ? progDayOffset : state.dayOffset;
+    const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(resolvedDayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
     const saved = isInWatchlist(prog.id);
     const hasRem = state.reminders.has(prog.id);
     const chNum = ch.numbers[state.platform];
     const nowMin = getNowMinutes();
-    const isLive = state.dayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
+    const isLive = resolvedDayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
     const starInfo = getEditorialStarInfo(prog, ch);
     const bStatus = getBroadcastStatus(prog, ch);
@@ -3161,18 +3357,16 @@
           ${hasRem ? "🔔 Reminder Set" : "🔔 Notify Me"}
         </button>
         <button class="ghost-btn" id="modalCalendarBtn" type="button">📅 Add to Calendar (.ics)</button>
-        <a class="ghost-btn" id="modalEmailBtn" href="mailto:?subject=${encodeURIComponent(`TV Reminder: ${prog.title} on ${ch.name}`)}&body=${encodeURIComponent(`${prog.title}\nChannel: ${ch.name}\nTime: ${formatTime(prog.startMin)}–${formatTime(prog.endMin)} (${state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")})\n\n${prog.desc || ""}`)}" style="text-decoration:none;">✉️ Email Reminder</a>
+        <a class="ghost-btn" id="modalEmailBtn" href="mailto:?subject=${encodeURIComponent(`TV Reminder: ${prog.title} on ${ch.name}`)}&body=${encodeURIComponent(`${prog.title}\nChannel: ${ch.name}\nTime: ${formatTime(prog.startMin)}–${formatTime(prog.endMin)} (${activeIsoDate})\n\n${prog.desc || ""}`)}" style="text-decoration:none;">✉️ Email Reminder</a>
       </div>
       <div id="modalSimilarWrap"></div>
     `;
 
     el.modalBody.querySelectorAll("[data-other-air-prog]").forEach((btn) => {
       btn.onclick = () => {
-        openProgrammeModal(btn.dataset.otherAirProg, btn.dataset.otherAirCh);
+        openProgrammeModal(btn.dataset.otherAirProg, btn.dataset.otherAirCh, Number(btn.dataset.otherAirDay || 0));
       };
     });
-
-    const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(state.dayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 
     // Live TVMaze episode airdate verification for exact Repeat / First-Aired date when Series & Ep are present
     const seMatch = String(prog.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
@@ -3227,7 +3421,7 @@
         subtitle: `${ch.name} (${activeIsoDate} ${formatTime(prog.startMin)})`,
         channelId: ch.id
       });
-      openProgrammeModal(progId, channelId);
+      openProgrammeModal(progId, channelId, resolvedDayOffset);
     };
 
     document.getElementById("modalCalendarBtn").onclick = () => {
@@ -3260,7 +3454,7 @@
       }
       localStorage.setItem("onair_reminders", JSON.stringify([...state.reminders]));
       localStorage.setItem("onair_reminder_items", JSON.stringify(state.reminderItems));
-      openProgrammeModal(progId, channelId);
+      openProgrammeModal(progId, channelId, resolvedDayOffset);
     };
 
     el.detailModal.classList.remove("hidden");
@@ -3462,10 +3656,16 @@
 
       const dateBtn = e.target.closest("[data-day]");
       if (dateBtn) {
-        state.dayOffset = Number(dateBtn.dataset.day);
+        const targetDay = Number(dateBtn.dataset.day);
         if (state.timeMachineDate) exitTimeMachine();
-        renderDateStrip();
-        renderEPG(true);
+        if (state.view === "epg") {
+          scrollToDayOffset(targetDay);
+        } else {
+          state.dayOffset = targetDay;
+          renderDateStrip();
+          if (state.view === "now-next") renderNowNext(true);
+          else if (state.view === "what-to-watch") renderWhatToWatch();
+        }
         return;
       }
 
@@ -3600,7 +3800,8 @@
 
       const progEl = e.target.closest("[data-prog-id]");
       if (progEl) {
-        openProgrammeModal(progEl.dataset.progId, progEl.dataset.channelId);
+        const progDay = progEl.dataset.progDay !== undefined ? Number(progEl.dataset.progDay) : state.dayOffset;
+        openProgrammeModal(progEl.dataset.progId, progEl.dataset.channelId, progDay);
         return;
       }
 
@@ -3741,6 +3942,8 @@
         renderWhatToWatch();
       });
     }
+
+    initContinuousEpgScroller();
   }
 
   // ========================================================================
