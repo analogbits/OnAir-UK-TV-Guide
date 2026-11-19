@@ -6030,6 +6030,14 @@
       }
       lastTmRefreshTs = Date.now();
     }
+    // Capture the exact time-of-day currently visible (Now, Overnight, Morning, Afternoon, Primetime, Late, etc.)
+    // BEFORE switching from multi-day continuous track to 1-day Time Machine track (prevents clamping to 23:00!)
+    let preservedMinInDay = Math.max(0, getNowMinutes() - 45);
+    if (el.epgScrollContainer && el.epgScrollContainer.scrollLeft >= 0 && epgContinuous.initialScrolled) {
+      const currentTotalMin = el.epgScrollContainer.scrollLeft / PIXELS_PER_MIN;
+      preservedMinInDay = ((currentTotalMin % 1440) + 1440) % 1440;
+    }
+
     state.timeMachineDate = isoDate;
     timeMachineEpg = {};
     if (el.tmPopover) el.tmPopover.classList.add("hidden");
@@ -6050,6 +6058,9 @@
     }
     renderDateStrip();
     renderEPG(false);
+    if (el.epgScrollContainer) {
+      el.epgScrollContainer.scrollLeft = Math.round(preservedMinInDay * PIXELS_PER_MIN);
+    }
 
     const renderTmBanner = (dataRes) => {
       const prettyDate = new Date(`${isoDate}T12:00:00Z`).toLocaleDateString("en-GB", {
@@ -6106,6 +6117,13 @@
   }
 
   function exitTimeMachine() {
+    let preservedMinInDay = Math.max(0, getNowMinutes() - 45);
+    if (el.epgScrollContainer && el.epgScrollContainer.scrollLeft >= 0) {
+      const currentTotalMin = el.epgScrollContainer.scrollLeft / PIXELS_PER_MIN;
+      preservedMinInDay = ((currentTotalMin % 1440) + 1440) % 1440;
+    }
+
+    epgContinuous.programmaticScrollUntil = Date.now() + 600;
     state.timeMachineDate = null;
     timeMachineEpg = null;
     if (el.tmPopover) el.tmPopover.classList.add("hidden");
@@ -6121,6 +6139,10 @@
     }
     renderDateStrip();
     renderEPG(false);
+    if (el.epgScrollContainer) {
+      const dayIdx = Math.max(0, state.dayOffset - epgContinuous.startDay);
+      el.epgScrollContainer.scrollLeft = Math.round(((dayIdx * 1440) + preservedMinInDay) * PIXELS_PER_MIN);
+    }
     ensureSchedulesForChannels(getFilteredChannels(state.epgCategory), state.dayOffset, false);
   }
 
