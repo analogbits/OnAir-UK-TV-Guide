@@ -76,7 +76,14 @@
     epgDensity: localStorage.getItem("onair_epg_density") || "comfortable",
     epgZoom: Number(localStorage.getItem("onair_epg_zoom") || 4),
     hideTeleshopping: localStorage.getItem("onair_hide_teleshopping") === "1",
+    hidePlusOne: localStorage.getItem("onair_hide_plus_one") === "1",
     hoverRevealNames: localStorage.getItem("onair_hover_reveal") !== "0",
+    timeFormat: localStorage.getItem("onair_time_format") || "24h",
+    defaultStartTime: localStorage.getItem("onair_start_time") || "now",
+    showGenreColors: localStorage.getItem("onair_genre_colors") !== "0",
+    dimPastShows: localStorage.getItem("onair_dim_past") !== "0",
+    showEditorialStars: localStorage.getItem("onair_show_stars") !== "0",
+    showStatusBadges: localStorage.getItem("onair_show_badges") !== "0",
     reminderLeadMins: Number(localStorage.getItem("onair_reminder_lead") || 10)
   };
   let timeMachineEpg = null;
@@ -909,6 +916,11 @@
     const total = Math.max(0, Math.round(Number(minutesFromMidnight) || 0));
     const h = Math.floor(total / 60) % 24;
     const m = total % 60;
+    if (state.timeFormat === "12h") {
+      const suffix = h >= 12 ? "pm" : "am";
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `${h12}:${String(m).padStart(2, "0")}${suffix}`;
+    }
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   }
 
@@ -943,6 +955,9 @@
         return false;
       }
       if (category === "Favorites") return state.favorites.has(ch.id);
+      if (state.hidePlusOne && /\+1\b|ja\s*vu/i.test(ch.name || "") && !state.favorites.has(ch.id)) {
+        return false;
+      }
       if (category !== "All" && ch.category !== category) return false;
       return true;
     }).sort((a, b) => channelSortValue(a.numbers[state.platform], a) - channelSortValue(b.numbers[state.platform], b));
@@ -1336,6 +1351,7 @@
     document.body.classList.toggle("hover-reveal-enabled", Boolean(state.hoverRevealNames));
     if (el.epgGrid) {
       el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
+      el.epgGrid.classList.toggle("no-genre-colors", !state.showGenreColors);
     }
     updateMobileFiltersSummary();
 
@@ -1401,12 +1417,12 @@
                   const todayIsoStr = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
                   const isRealToday = state.timeMachineDate ? state.timeMachineDate === todayIsoStr : d === 0;
                   const isLive = isRealToday && nowMin >= p.startMin && nowMin < p.endMin;
-                  const isPast = !state.timeMachineDate && ((d < 0) || (isRealToday && nowMin >= p.endMin));
-                  const starInfo = getEditorialStarInfo(p, ch);
+                  const isPast = state.dimPastShows && !state.timeMachineDate && ((d < 0) || (isRealToday && nowMin >= p.endMin));
+                  const starInfo = state.showEditorialStars ? getEditorialStarInfo(p, ch) : null;
                   const starHtml = starInfo
                     ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
                     : "";
-                  const bStatus = getBroadcastStatus(p, ch, d);
+                  const bStatus = state.showStatusBadges ? getBroadcastStatus(p, ch, d) : "";
                   const isRep = bStatus === "Repeat";
                   const rSuffix = isRep && !/\(R\)/i.test(p.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : "";
                   const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title}${isRep && !/\(R\)/i.test(p.title || "") ? " (R)" : bStatus === "New" ? " (NEW)" : ""} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
@@ -1439,7 +1455,7 @@
 
           return `
             <div class="epg-row">
-              <div class="epg-channel-cell">
+              <div class="epg-channel-cell is-clickable" data-open-channel="${escapeHtml(ch.id)}" title="Click to open ${escapeHtml(ch.name)} full schedule (-7 to +7 days &amp; channel info)">
                 <span class="channel-num">${chNum}</span>
                 <div class="channel-badge" style="background:${ch.color}">${escapeHtml(ch.short)}</div>
                 <div class="channel-meta">
@@ -1505,10 +1521,14 @@
 
     if (!epgContinuous.initialScrolled) {
       epgContinuous.initialScrolled = true;
-      // Jump synchronously & instantly to Today @ Right Now so the user NEVER starts on Yesterday
+      // Jump synchronously & instantly to user's preferred start time (Right Now, Primetime, or Morning)
       epgContinuous.programmaticScrollUntil = Date.now() + 800;
       const todayIdx = Math.max(0, 0 - startDay);
-      const startNowPx = Math.max(0, (todayIdx * dayWidth) + (Math.max(0, nowMin - 45) * PIXELS_PER_MIN));
+      const prefStartMin =
+        state.defaultStartTime === "now"
+          ? Math.max(0, nowMin - 45)
+          : Math.max(0, Number(state.defaultStartTime || 20) * 60 - 45);
+      const startNowPx = Math.max(0, (todayIdx * dayWidth) + (prefStartMin * PIXELS_PER_MIN));
       if (el.epgScrollContainer) {
         el.epgScrollContainer.scrollLeft = startNowPx;
         requestAnimationFrame(() => {
@@ -1800,7 +1820,7 @@
 
         return `
           <article class="nn-card">
-            <div class="nn-card-head">
+            <div class="nn-card-head is-clickable" data-open-channel="${escapeHtml(ch.id)}" title="Click to open ${escapeHtml(ch.name)} full schedule (-7 to +7 days &amp; channel info)">
               <span class="channel-num">${ch.numbers[state.platform]}</span>
               <div class="channel-badge" style="background:${ch.color}">${escapeHtml(ch.short)}</div>
               <div class="channel-meta">
@@ -3672,6 +3692,521 @@
     return out;
   }
 
+  // ========================================================================
+  // Channel Viewer Modal (-7d to +7d Continuous Schedule + Channel Info)
+  // ========================================================================
+  const _channelWikiCache = new Map();
+  const _channelDayFetched = new Set();
+  let _activeChannelViewer = null;
+
+  function cleanChannelNameForWiki(name) {
+    return String(name || "")
+      .replace(/\b(NI|Wales|Scot|Scotland|London|East|West|South|North|Yorks|Midlands|SW|SE|NW|NE|HD|SD|UHD|\+1)\b/gi, "")
+      .replace(/^U&/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  async function fetchChannelWikiSummary(ch) {
+    const key = cleanChannelNameForWiki(ch.name) || ch.name;
+    if (_channelWikiCache.has(key)) return _channelWikiCache.get(key);
+    const candidates = [
+      `${key} (TV channel)`,
+      key === "5" ? "Channel 5 (British TV channel)" : key,
+      `${key} (British TV channel)`
+    ];
+    for (const title of candidates) {
+      try {
+        const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/\s+/g, "_"))}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (data && data.extract && data.type !== "disambiguation" && /(television|channel|broadcast|network|bbc|itv|sky|streaming|service)/i.test(data.extract)) {
+          const out = {
+            extract: data.extract,
+            url: (data.content_urls && data.content_urls.desktop && data.content_urls.desktop.page) || `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/\s+/g, "_"))}`,
+            thumbnail: data.thumbnail && data.thumbnail.source ? data.thumbnail.source : null
+          };
+          _channelWikiCache.set(key, out);
+          return out;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+    _channelWikiCache.set(key, null);
+    return null;
+  }
+
+  function formatChannelViewerDayHeading(dayOffset) {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    const full = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(d);
+    if (dayOffset === 0) return `Today — ${full}`;
+    if (dayOffset === 1) return `Tomorrow — ${full}`;
+    if (dayOffset === -1) return `Yesterday — ${full}`;
+    return full;
+  }
+
+  function openChannelViewerModal(channelId) {
+    const ch = getChannelById(channelId);
+    if (!ch) return;
+
+    const viewer = {
+      id: `${ch.id}-${Date.now()}`,
+      ch,
+      minDay: -7,
+      maxDay: 7,
+      minLimit: -30,
+      maxLimit: 14,
+      query: "",
+      hideRepeats: false,
+      queue: [],
+      processing: false,
+      extending: false,
+      scrolledToNow: false
+    };
+    _activeChannelViewer = viewer;
+
+    const isFav = state.favorites.has(ch.id);
+    const liveUrl = getLiveStreamUrl(ch);
+    const catchupUrlMap = {
+      "BBC iPlayer": "https://www.bbc.co.uk/iplayer",
+      "ITVX": "https://www.itv.com/",
+      "Channel 4": "https://www.channel4.com/",
+      "My5": "https://www.channel5.com/",
+      "U": "https://u.co.uk/",
+      "NOW": "https://www.nowtv.com/",
+      "discovery+": "https://www.discoveryplus.com/gb",
+      "GREAT! player": "https://www.greatplayer.co.uk/",
+      "Watch Free UK": "https://www.watchfreeuk.co.uk/",
+      "Pluto TV": "https://pluto.tv/uk/live-tv",
+      "Tubi": "https://tubitv.com/live"
+    };
+    const catchupUrl = catchupUrlMap[ch.catchup] || `https://www.google.com/search?q=${encodeURIComponent(`${ch.name} UK TV catch up`)}`;
+
+    const platformBadgesHtml = PLATFORMS
+      .filter((p) => ch.numbers && ch.numbers[p.id] !== null && ch.numbers[p.id] !== undefined)
+      .map((p) => {
+        const isCurrent = p.id === state.platform;
+        return `<span class="ch-plat-chip ${isCurrent ? "is-current" : ""}"><strong>${escapeHtml(p.name)}</strong> Ch ${escapeHtml(String(ch.numbers[p.id]))}</span>`;
+      })
+      .join("");
+
+    // Current On Now & Up Next snapshot
+    const nowMin = getNowMinutes();
+    const todayProgs = getSchedule(ch.id, 0);
+    let nowNextBannerHtml = "";
+    if (Array.isArray(todayProgs) && todayProgs.length) {
+      const nowIdx = todayProgs.findIndex((p) => nowMin >= p.startMin && nowMin < p.endMin);
+      const cur = nowIdx >= 0 ? todayProgs[nowIdx] : null;
+      const nxt = nowIdx >= 0 && todayProgs[nowIdx + 1] ? todayProgs[nowIdx + 1] : null;
+      if (cur) {
+        const pct = Math.min(100, Math.max(4, Math.round(((nowMin - cur.startMin) / Math.max(1, cur.endMin - cur.startMin)) * 100)));
+        nowNextBannerHtml = `
+          <div class="ch-now-next-strip">
+            <button type="button" class="ch-nn-box is-now" data-chv-prog="${escapeHtml(cur.id)}" data-chv-day="0">
+              <div class="ch-nn-kicker"><span class="mini-tag live">ON NOW</span> <span>${formatTime(cur.startMin)} – ${formatTime(cur.endMin)}</span></div>
+              <div class="ch-nn-title">${escapeHtml(cur.title)}</div>
+              <div class="nn-progress-bar" style="margin-top:6px;"><div class="nn-progress-fill" style="width:${pct}%"></div></div>
+            </button>
+            ${
+              nxt
+                ? `<button type="button" class="ch-nn-box" data-chv-prog="${escapeHtml(nxt.id)}" data-chv-day="0">
+                    <div class="ch-nn-kicker"><span class="mini-tag">UP NEXT</span> <span>${formatTime(nxt.startMin)} – ${formatTime(nxt.endMin)}</span></div>
+                    <div class="ch-nn-title">${escapeHtml(nxt.title)}</div>
+                    <div class="ch-nn-sub">${escapeHtml(nxt.ep || nxt.genre || "")}</div>
+                  </button>`
+                : ""
+            }
+          </div>
+        `;
+      }
+    }
+
+    el.modalBody.innerHTML = `
+      <div class="ch-viewer-wrap" data-ch-viewer-id="${escapeHtml(viewer.id)}">
+        <div class="ch-viewer-header">
+          <div class="ch-viewer-badge-lg" style="background:${ch.color}">${escapeHtml(ch.short)}</div>
+          <div class="ch-viewer-head-meta">
+            <div class="modal-kicker">
+              <span class="mini-tag">${ch.hd ? "HD" : "SD"}</span>
+              <span class="mini-tag">${escapeHtml(ch.category || "TV")}</span>
+              <span class="mini-tag catchup">${escapeHtml(ch.catchup || "Live TV")}</span>
+            </div>
+            <h2 id="modalTitle" class="modal-title" style="margin:2px 0 4px;">${escapeHtml(ch.name)}</h2>
+            <div id="chViewerAbout" class="ch-viewer-about">Loading channel information...</div>
+          </div>
+        </div>
+
+        <div class="ch-viewer-actions-bar">
+          <button id="chViewerFavBtn" type="button" class="pill-btn ${isFav ? "is-active" : ""}">
+            ${isFav ? "★ In Favorites" : "☆ Add to Favorites"}
+          </button>
+          ${liveUrl ? `<a class="btn-primary" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener" style="text-decoration:none; padding:6px 13px; font-size:12.5px;">&#9654; Watch Live &nearr;</a>` : ""}
+          <a class="ghost-btn" href="${escapeHtml(catchupUrl)}" target="_blank" rel="noopener" style="text-decoration:none; padding:6px 12px; font-size:12.5px;">On Demand (${escapeHtml(ch.catchup || "Web")}) &nearr;</a>
+        </div>
+
+        <div class="ch-platforms-card">
+          <div class="ch-platforms-label">Where to Find ${escapeHtml(ch.name)} Across UK Platforms</div>
+          <div class="ch-platforms-chips">${platformBadgesHtml || `<span class="ch-plat-chip">Online / Streaming</span>`}</div>
+        </div>
+
+        ${nowNextBannerHtml}
+
+        <div class="ch-schedule-toolbar">
+          <div id="chViewerDayStrip" class="ch-viewer-day-strip"></div>
+          <div class="ch-schedule-controls">
+            <input id="chViewerSearch" class="region-select" type="search" placeholder="Search shows on ${escapeHtml(ch.name)}..." style="flex:1; min-width:150px; max-width:none;" />
+            <button id="chViewerJumpNowBtn" type="button" class="jump-btn jump-now"><span class="live-dot"></span> Now</button>
+            <label class="ch-viewer-toggle-label">
+              <input id="chViewerHideRep" type="checkbox" /> Hide (R)
+            </label>
+          </div>
+        </div>
+
+        <div id="chViewerListWrap" class="ch-viewer-list-wrap">
+          <div class="ch-viewer-edge-bar">
+            <button id="chViewerLoadEarlierBtn" type="button" class="ghost-btn" style="font-size:12px; padding:5px 12px;">&uarr; Load Earlier Days</button>
+          </div>
+          <div id="chViewerDaysContainer"></div>
+          <div class="ch-viewer-edge-bar">
+            <button id="chViewerLoadLaterBtn" type="button" class="ghost-btn" style="font-size:12px; padding:5px 12px;">&darr; Load More Upcoming Days</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    el.detailModal.classList.remove("hidden");
+
+    // Lazy-load Wikipedia channel description (cached per channel)
+    fetchChannelWikiSummary(ch).then((info) => {
+      if (_activeChannelViewer !== viewer) return;
+      const aboutEl = document.getElementById("chViewerAbout");
+      if (!aboutEl) return;
+      if (info && info.extract) {
+        const snippet = info.extract.length > 230 ? `${info.extract.slice(0, 227).trim()}…` : info.extract;
+        aboutEl.innerHTML = `${escapeHtml(snippet)} <a href="${escapeHtml(info.url)}" target="_blank" rel="noopener" style="color:var(--accent-teal); font-weight:600; text-decoration:none;">Wikipedia &nearr;</a>`;
+      } else {
+        aboutEl.textContent = `${ch.name} (${ch.hd ? "HD" : "SD"}) — ${ch.category || "UK TV"} channel with catch-up via ${ch.catchup || "broadcaster app"}.`;
+      }
+    });
+
+    const renderViewerDayStrip = () => {
+      const strip = document.getElementById("chViewerDayStrip");
+      if (!strip) return;
+      let html = "";
+      for (let d = viewer.minDay; d <= viewer.maxDay; d++) {
+        const cls = d === 0 ? "is-active" : "";
+        html += `<button type="button" class="date-btn ${cls}" data-chv-jump-day="${d}">${escapeHtml(formatDayShort(d))}</button>`;
+      }
+      strip.innerHTML = html;
+      const todayBtn = strip.querySelector('[data-chv-jump-day="0"]');
+      if (todayBtn && !viewer.scrolledToNow && todayBtn.scrollIntoView) {
+        todayBtn.scrollIntoView({ inline: "center", block: "nearest" });
+      }
+    };
+
+    const buildDaySectionHtml = (d) => {
+      const progs = getSchedule(ch.id, d);
+      const heading = formatChannelViewerDayHeading(d);
+      const badgeCls = d === 0 ? "is-today" : d < 0 ? "is-past" : "is-future";
+      const fetchKey = `${ch.sid}|${d}`;
+      const wasFetched = _channelDayFetched.has(fetchKey);
+      let bodyHtml = "";
+
+      if (progs === null && !wasFetched) {
+        bodyHtml = `<div class="ch-day-empty">Loading schedule for ${escapeHtml(formatDayShort(d))}...</div>`;
+      } else if (!Array.isArray(progs) || progs.length === 0) {
+        bodyHtml = `<div class="ch-day-empty">${d > 7 ? "Schedule not yet published by broadcaster for this date." : "No broadcast schedule published for this date."}</div>`;
+      } else {
+        const q = viewer.query.toLowerCase().trim();
+        const filtered = progs.filter((p) => {
+          if (state.hideTeleshopping && /\b(teleshopping|shop on tv|ideal world|qvc|paid programming|infomercial)\b/i.test(p.title || "")) return false;
+          const bStatus = getBroadcastStatus(p, ch, d);
+          if (viewer.hideRepeats && bStatus === "Repeat") return false;
+          if (q && !(String(p.title || "").toLowerCase().includes(q) || String(p.desc || "").toLowerCase().includes(q) || String(p.ep || "").toLowerCase().includes(q))) {
+            return false;
+          }
+          return true;
+        });
+
+        if (filtered.length === 0) {
+          bodyHtml = `<div class="ch-day-empty">No programmes match your filter on ${escapeHtml(formatDayShort(d))}.</div>`;
+        } else {
+          const curNowMin = getNowMinutes();
+          bodyHtml = filtered
+            .map((p) => {
+              const isLive = d === 0 && curNowMin >= p.startMin && curNowMin < p.endMin;
+              const isPast = (d < 0) || (d === 0 && curNowMin >= p.endMin);
+              const starInfo = state.showEditorialStars ? getEditorialStarInfo(p, ch) : null;
+              const bStatus = state.showStatusBadges ? getBroadcastStatus(p, ch, d) : "";
+              const isRep = bStatus === "Repeat";
+              return `
+                <button type="button" class="ch-prog-row ${isLive ? "is-live" : ""} ${state.dimPastShows && isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}" data-chv-prog="${escapeHtml(p.id)}" data-chv-day="${d}">
+                  <div class="ch-prog-time">
+                    <strong>${formatTime(p.startMin)}</strong>
+                    <span>${formatTime(p.endMin)}</span>
+                  </div>
+                  <div class="ch-prog-main">
+                    <div class="ch-prog-title">
+                      ${starInfo ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}
+                      <span>${escapeHtml(p.title)}</span>
+                      ${isLive ? `<span class="mini-tag live">LIVE</span>` : bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag">R</span>` : ""}
+                    </div>
+                    <div class="ch-prog-meta">${p.ep ? `${escapeHtml(p.ep)} &bull; ` : ""}${escapeHtml(p.genre || "")}</div>
+                  </div>
+                </button>
+              `;
+            })
+            .join("");
+        }
+      }
+
+      return `
+        <section class="ch-day-section" data-chv-day-section="${d}">
+          <div class="ch-day-sticky-head">
+            <span class="day-marker-badge ${badgeCls}">${escapeHtml(formatDayShort(d))}</span>
+            <span>${escapeHtml(heading)}</span>
+          </div>
+          <div class="ch-day-progs">${bodyHtml}</div>
+        </section>
+      `;
+    };
+
+    const renderViewerDays = (preserveScrollForPrepend = false) => {
+      const container = document.getElementById("chViewerDaysContainer");
+      const wrap = document.getElementById("chViewerListWrap");
+      if (!container || !wrap) return;
+      const oldScrollHeight = wrap.scrollHeight;
+      const oldScrollTop = wrap.scrollTop;
+
+      let html = "";
+      for (let d = viewer.minDay; d <= viewer.maxDay; d++) {
+        html += buildDaySectionHtml(d);
+      }
+      container.innerHTML = html;
+
+      if (preserveScrollForPrepend) {
+        const addedHeight = wrap.scrollHeight - oldScrollHeight;
+        if (addedHeight > 0) wrap.scrollTop = oldScrollTop + addedHeight;
+      }
+
+      const earlierBtn = document.getElementById("chViewerLoadEarlierBtn");
+      if (earlierBtn) {
+        earlierBtn.textContent = viewer.minDay <= viewer.minLimit
+          ? `Reached ${Math.abs(viewer.minLimit)}-day archive limit`
+          : `↑ Load Earlier Days (${formatDayShort(viewer.minDay - 3)} – ${formatDayShort(viewer.minDay - 1)})`;
+        earlierBtn.disabled = viewer.minDay <= viewer.minLimit;
+      }
+      const laterBtn = document.getElementById("chViewerLoadLaterBtn");
+      if (laterBtn) {
+        laterBtn.textContent = viewer.maxDay >= viewer.maxLimit
+          ? `Reached ${viewer.maxLimit}-day advance limit`
+          : `↓ Load More Upcoming Days (${formatDayShort(viewer.maxDay + 1)} – ${formatDayShort(viewer.maxDay + 3)})`;
+        laterBtn.disabled = viewer.maxDay >= viewer.maxLimit;
+      }
+    };
+
+    const scrollViewerToDay = (d, focusNow = false) => {
+      const wrap = document.getElementById("chViewerListWrap");
+      const sec = wrap && wrap.querySelector(`[data-chv-day-section="${d}"]`);
+      if (!wrap || !sec) return;
+      if (focusNow && d === 0) {
+        const liveRow = sec.querySelector(".ch-prog-row.is-live");
+        if (liveRow) {
+          wrap.scrollTo({ top: Math.max(0, liveRow.offsetTop - 90), behavior: viewer.scrolledToNow ? "smooth" : "auto" });
+          return;
+        }
+      }
+      wrap.scrollTo({ top: Math.max(0, sec.offsetTop - 8), behavior: viewer.scrolledToNow ? "smooth" : "auto" });
+    };
+
+    // Polite single-channel sequential fetcher (1 SID at a time, zero server overload!)
+    const enqueueChannelDays = (days) => {
+      days.forEach((d) => {
+        const key = `${ch.sid}|${d}`;
+        if (_channelDayFetched.has(key)) return;
+        const existing = getSchedule(ch.id, d);
+        if (Array.isArray(existing) && existing.length > 0) {
+          _channelDayFetched.add(key);
+          return;
+        }
+        if (!viewer.queue.includes(d)) viewer.queue.push(d);
+      });
+      if (viewer.processing) return;
+      viewer.processing = true;
+
+      (async () => {
+        try {
+          while (viewer.queue.length > 0 && _activeChannelViewer === viewer) {
+            const d = viewer.queue.shift();
+            const key = `${ch.sid}|${d}`;
+            if (_channelDayFetched.has(key)) continue;
+            _channelDayFetched.add(key);
+
+            try {
+              if (ch.plutoSlug && ONAIR_LIVE.fetchPlutoTvData) {
+                const pluto = await ONAIR_LIVE.fetchPlutoTvData(d, false).catch(() => null);
+                if (pluto && pluto.schedules) {
+                  const evs = pluto.schedules[ch.id] || pluto.schedules[ch.sid] || [];
+                  const curMap = liveEpgByDay.get(d) || {};
+                  curMap[ch.sid] = evs;
+                  liveEpgByDay.set(d, curMap);
+                }
+              } else if (ch.tubiId && ONAIR_LIVE.fetchTubiLiveData) {
+                const tubi = await ONAIR_LIVE.fetchTubiLiveData(d, false).catch(() => null);
+                if (tubi && tubi.schedules) {
+                  const evs = tubi.schedules[ch.id] || tubi.schedules[ch.sid] || [];
+                  const curMap = liveEpgByDay.get(d) || {};
+                  curMap[ch.sid] = evs;
+                  liveEpgByDay.set(d, curMap);
+                }
+              } else if (ch.sid && ONAIR_LIVE.fetchSkySchedulesForSids) {
+                const fetched = await ONAIR_LIVE.fetchSkySchedulesForSids([ch.sid], d, false).catch(() => ({}));
+                const curMap = liveEpgByDay.get(d) || {};
+                curMap[ch.sid] = fetched[ch.sid] || [];
+                liveEpgByDay.set(d, curMap);
+                _earlierAiringsDirty = true;
+              }
+            } catch {
+              // ignore individual day failure
+            }
+
+            if (_activeChannelViewer === viewer) {
+              const secEl = document.querySelector(`[data-chv-day-section="${d}"]`);
+              if (secEl) {
+                secEl.outerHTML = buildDaySectionHtml(d);
+              }
+            }
+            await new Promise((r) => setTimeout(r, 140));
+          }
+        } finally {
+          viewer.processing = false;
+        }
+      })();
+    };
+
+    const loadMoreEarlierDays = () => {
+      if (viewer.extending || viewer.minDay <= viewer.minLimit) return;
+      viewer.extending = true;
+      const prevMin = viewer.minDay;
+      viewer.minDay = Math.max(viewer.minLimit, prevMin - 3);
+      const added = [];
+      for (let d = prevMin - 1; d >= viewer.minDay; d--) added.push(d);
+      renderViewerDayStrip();
+      renderViewerDays(true);
+      enqueueChannelDays(added);
+      setTimeout(() => { viewer.extending = false; }, 350);
+    };
+
+    const loadMoreLaterDays = () => {
+      if (viewer.extending || viewer.maxDay >= viewer.maxLimit) return;
+      viewer.extending = true;
+      const prevMax = viewer.maxDay;
+      viewer.maxDay = Math.min(viewer.maxLimit, prevMax + 3);
+      const added = [];
+      for (let d = prevMax + 1; d <= viewer.maxDay; d++) added.push(d);
+      renderViewerDayStrip();
+      renderViewerDays(false);
+      enqueueChannelDays(added);
+      setTimeout(() => { viewer.extending = false; }, 350);
+    };
+
+    renderViewerDayStrip();
+    renderViewerDays(false);
+    // Scroll straight to Today / Right Now on open
+    requestAnimationFrame(() => {
+      scrollViewerToDay(0, true);
+      viewer.scrolledToNow = true;
+    });
+
+    // Prioritize Today, Tomorrow, Yesterday, then radiate outward to ±7 days
+    const priorityOrder = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
+    enqueueChannelDays(priorityOrder);
+
+    // Wire interactive controls inside the Channel Viewer
+    const favBtn = document.getElementById("chViewerFavBtn");
+    if (favBtn) {
+      favBtn.onclick = () => {
+        if (state.favorites.has(ch.id)) {
+          state.favorites.delete(ch.id);
+          favBtn.classList.remove("is-active");
+          favBtn.textContent = "☆ Add to Favorites";
+          showToast(`Removed ${ch.name} from Favorites`);
+        } else {
+          state.favorites.add(ch.id);
+          favBtn.classList.add("is-active");
+          favBtn.textContent = "★ In Favorites";
+          showToast(`Added ${ch.name} to Favorites`);
+        }
+        localStorage.setItem("onair_favorites", JSON.stringify([...state.favorites]));
+        if (state.view === "epg") renderEPG(false);
+      };
+    }
+
+    const dayStrip = document.getElementById("chViewerDayStrip");
+    if (dayStrip) {
+      dayStrip.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-chv-jump-day]");
+        if (!btn) return;
+        const d = Number(btn.dataset.chvJumpDay);
+        dayStrip.querySelectorAll(".date-btn").forEach((b) => b.classList.toggle("is-active", Number(b.dataset.chvJumpDay) === d));
+        scrollViewerToDay(d, d === 0);
+      });
+    }
+
+    const jumpNowBtn = document.getElementById("chViewerJumpNowBtn");
+    if (jumpNowBtn) jumpNowBtn.onclick = () => scrollViewerToDay(0, true);
+
+    const searchInp = document.getElementById("chViewerSearch");
+    if (searchInp) {
+      let sTimer = null;
+      searchInp.addEventListener("input", (e) => {
+        viewer.query = e.target.value || "";
+        if (sTimer) clearTimeout(sTimer);
+        sTimer = setTimeout(() => renderViewerDays(false), 120);
+      });
+    }
+
+    const hideRepChk = document.getElementById("chViewerHideRep");
+    if (hideRepChk) {
+      hideRepChk.addEventListener("change", (e) => {
+        viewer.hideRepeats = Boolean(e.target.checked);
+        renderViewerDays(false);
+      });
+    }
+
+    const earlierBtn = document.getElementById("chViewerLoadEarlierBtn");
+    if (earlierBtn) earlierBtn.onclick = loadMoreEarlierDays;
+    const laterBtn = document.getElementById("chViewerLoadLaterBtn");
+    if (laterBtn) laterBtn.onclick = loadMoreLaterDays;
+
+    // Auto-load past ±7 days smoothly when scrolling near top or bottom of the list!
+    const listWrap = document.getElementById("chViewerListWrap");
+    if (listWrap) {
+      listWrap.addEventListener("scroll", () => {
+        if (!viewer.scrolledToNow || viewer.extending || viewer.query) return;
+        if (listWrap.scrollTop < 120 && viewer.minDay > viewer.minLimit) {
+          loadMoreEarlierDays();
+        } else if (listWrap.scrollTop + listWrap.clientHeight > listWrap.scrollHeight - 220 && viewer.maxDay < viewer.maxLimit) {
+          loadMoreLaterDays();
+        }
+      }, { passive: true });
+    }
+
+    // Clicking any programme inside the Channel Viewer opens its full Programme Detail Modal
+    const viewerRoot = el.modalBody.querySelector(".ch-viewer-wrap");
+    if (viewerRoot) {
+      viewerRoot.addEventListener("click", (e) => {
+        const progBtn = e.target.closest("[data-chv-prog]");
+        if (!progBtn) return;
+        const pid = progBtn.dataset.chvProg;
+        const pDay = Number(progBtn.dataset.chvDay || 0);
+        openProgrammeModal(pid, ch.id, pDay);
+      });
+    }
+  }
+
   function openProgrammeModal(progId, channelId, progDayOffset) {
     const ch = getChannelById(channelId);
     const prog = findProgrammeById(progId, channelId, progDayOffset);
@@ -3718,7 +4253,7 @@
         ${prog.image ? `<img class="modal-poster" src="${prog.image}" alt="${prog.title}" />` : ""}
         <div>
           <div class="modal-kicker">
-            <span class="platform-tag" style="background:${ch.color}">${ch.name}${chNum ? ` &bull; Ch ${chNum}` : ""}</span>
+            <button type="button" class="platform-tag is-clickable-tag" data-open-channel="${escapeHtml(ch.id)}" style="background:${ch.color}; border:none; cursor:pointer;" title="View full ${escapeHtml(ch.name)} schedule (-7 to +7 days)">${escapeHtml(ch.name)}${chNum ? ` &bull; Ch ${chNum}` : ""} &rsaquo;</button>
             ${starInfo ? `<span class="mini-tag rt-pick">&#9733; ${escapeHtml(starInfo.label)}</span>` : ""}
             <span class="mini-tag">${prog.genre}</span>
             <span class="mini-tag">Cert ${prog.rating}</span>
@@ -4167,6 +4702,12 @@
         }
         localStorage.setItem("onair_favorites", JSON.stringify([...state.favorites]));
         renderEPG();
+        return;
+      }
+
+      const openChEl = e.target.closest("[data-open-channel]");
+      if (openChEl) {
+        openChannelViewerModal(openChEl.dataset.openChannel);
         return;
       }
 
@@ -4631,10 +5172,20 @@
       ? new Date(report.repoUpdatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
       : "Not generated yet";
 
+    const toggleHtml = (id, checked, labelOn = "On", labelOff = "Off") => `
+      <label class="toggle-switch-wrap">
+        <span class="toggle-switch">
+          <input id="${id}" type="checkbox" ${checked ? "checked" : ""} />
+          <span class="toggle-slider"></span>
+        </span>
+        <span class="toggle-status-lbl">${checked ? labelOn : labelOff}</span>
+      </label>
+    `;
+
     el.settingsContainer.innerHTML = `
       <div class="settings-card">
-        <h2>Display, Platform &amp; Seasonal Preferences</h2>
-        <p class="settings-card-desc">Control appearance, default platform, and seasonal spotlight behaviour across OnAir UK.</p>
+        <h2>🎨 Appearance &amp; TV Guide Layout</h2>
+        <p class="settings-card-desc">Customise theme, clock format, grid spacing, and visual highlights in the TV Guide.</p>
 
         <div class="settings-row">
           <div class="settings-row-label">
@@ -4650,8 +5201,71 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
+            <strong>Clock / Time Format</strong>
+            <span>Display broadcast times in 24-hour (20:30) or 12-hour (8:30pm) format.</span>
+          </div>
+          <select id="settingTimeFormatSelect" class="settings-select">
+            <option value="24h" ${state.timeFormat === "24h" ? "selected" : ""}>24-Hour (20:30)</option>
+            <option value="12h" ${state.timeFormat === "12h" ? "selected" : ""}>12-Hour (8:30pm)</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>EPG Grid Row Density</strong>
+            <span>Switch to Compact rows to fit more channels at once (great on mobile &amp; landscape).</span>
+          </div>
+          <select id="settingDensitySelect" class="settings-select">
+            <option value="comfortable" ${state.epgDensity === "comfortable" ? "selected" : ""}>Comfortable (Default)</option>
+            <option value="compact" ${state.epgDensity === "compact" ? "selected" : ""}>Compact (More Channels)</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>EPG Timeline Horizontal Zoom</strong>
+            <span>Widen programme blocks to read short 15–30 min shows easily, or narrow to see more hours.</span>
+          </div>
+          <select id="settingZoomSelect" class="settings-select">
+            <option value="3" ${Number(state.epgZoom) === 3 ? "selected" : ""}>Compact (More hours visible)</option>
+            <option value="4" ${Number(state.epgZoom) === 4 ? "selected" : ""}>Standard (Default)</option>
+            <option value="6" ${Number(state.epgZoom) === 6 ? "selected" : ""}>Expanded (Wider blocks)</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Show Genre Colour Accents</strong>
+            <span>Colour-coded left edge bars on Drama, Film, Sport, News &amp; Entertainment tiles.</span>
+          </div>
+          ${toggleHtml("settingGenreColorsToggle", state.showGenreColors, "Shown", "Minimal")}
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Dim Finished Programmes</strong>
+            <span>Subtly fade shows that have already finished so upcoming TV stands out.</span>
+          </div>
+          ${toggleHtml("settingDimPastToggle", state.dimPastShows, "Dimmed", "Full Brightness")}
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Hover Over Reveals Full Name (Desktop)</strong>
+            <span>Expands truncated programme &amp; channel titles on mouse hover (disabled on mobile).</span>
+          </div>
+          ${toggleHtml("settingHoverRevealToggle", state.hoverRevealNames, "Enabled", "Off")}
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h2>📺 Channels, Content &amp; Filtering</h2>
+        <p class="settings-card-desc">Choose your UK/Ireland platform, region, startup behaviour, and clutter filters.</p>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
             <strong>Default TV Platform</strong>
-            <span>Channel numbering used across TV Guide &amp; Now &amp; Next.</span>
+            <span>Channel numbering used across TV Guide, Now &amp; Next &amp; Channel Viewer.</span>
           </div>
           <select id="settingPlatformSelect" class="settings-select">
             ${PLATFORMS.map((p) => `<option value="${p.id}" ${state.platform === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
@@ -4665,17 +5279,6 @@
           </div>
           <select id="settingRegionSelect" class="settings-select">
             ${(ONAIR_LIVE.REGIONS || []).map((r) => `<option value="${r.id}" ${ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().id === r.id ? "selected" : ""}>${r.name}</option>`).join("")}
-          </select>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row-label">
-            <strong>Seasonal Spotlight &amp; Filter</strong>
-            <span>Auto-updates year-round by date, or preview any season anytime.</span>
-          </div>
-          <select id="settingSeasonSelect" class="settings-select">
-            <option value="auto" ${state.seasonOverride === "auto" ? "selected" : ""}>Auto (${getAutoSeason().chip} · ${getAutoSeason().windowLabel})</option>
-            ${SEASON_CALENDAR.map((s) => `<option value="${s.id}" ${state.seasonOverride === s.id ? "selected" : ""}>${s.chip} (${s.windowLabel})</option>`).join("")}
           </select>
         </div>
 
@@ -4695,36 +5298,33 @@
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <strong>EPG Grid Row Density</strong>
-            <span>Switch to Compact rows to fit more channels at once (great on mobile &amp; landscape).</span>
+            <strong>Default TV Guide Start Time</strong>
+            <span>Choose where the TV Guide timeline positions itself when you first open the site.</span>
           </div>
-          <select id="settingDensitySelect" class="settings-select">
-            <option value="comfortable" ${state.epgDensity === "comfortable" ? "selected" : ""}>Comfortable (Default)</option>
-            <option value="compact" ${state.epgDensity === "compact" ? "selected" : ""}>Compact (More Channels Visible)</option>
+          <select id="settingStartTimeSelect" class="settings-select">
+            <option value="now" ${state.defaultStartTime === "now" ? "selected" : ""}>Right Now (Live)</option>
+            <option value="20" ${state.defaultStartTime === "20" ? "selected" : ""}>Primetime (20:00)</option>
+            <option value="9" ${state.defaultStartTime === "9" ? "selected" : ""}>Morning (09:00)</option>
           </select>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <strong>EPG Timeline Horizontal Zoom</strong>
-            <span>Widen programme blocks to read short 15–30 min shows easily, or narrow to see more hours.</span>
+            <strong>Seasonal Spotlight &amp; Filter</strong>
+            <span>Auto-updates year-round by date, or preview any season anytime.</span>
           </div>
-          <select id="settingZoomSelect" class="settings-select">
-            <option value="3" ${Number(state.epgZoom) === 3 ? "selected" : ""}>Compact (More hours visible)</option>
-            <option value="4" ${Number(state.epgZoom) === 4 ? "selected" : ""}>Standard (Default)</option>
-            <option value="6" ${Number(state.epgZoom) === 6 ? "selected" : ""}>Expanded (Wider programme blocks)</option>
+          <select id="settingSeasonSelect" class="settings-select">
+            <option value="auto" ${state.seasonOverride === "auto" ? "selected" : ""}>Auto (${getAutoSeason().chip} · ${getAutoSeason().windowLabel})</option>
+            ${SEASON_CALENDAR.map((s) => `<option value="${s.id}" ${state.seasonOverride === s.id ? "selected" : ""}>${s.chip} (${s.windowLabel})</option>`).join("")}
           </select>
         </div>
 
         <div class="settings-row">
           <div class="settings-row-label">
-            <strong>Hover Over Reveals Full Name (Desktop Only)</strong>
-            <span>Expands truncated programme &amp; channel titles on mouse hover in the TV Guide (automatically disabled on mobile &amp; touch screens).</span>
+            <strong>Hide +1 Timeshift Channels</strong>
+            <span>Declutters ITV+1, Channel 4+1, E4+1 &amp; Dave ja vu (keeps any you favourited).</span>
           </div>
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
-            <input id="settingHoverRevealToggle" type="checkbox" ${state.hoverRevealNames ? "checked" : ""} />
-            ${state.hoverRevealNames ? "Enabled" : "Off"}
-          </label>
+          ${toggleHtml("settingHidePlusOneToggle", state.hidePlusOne, "Hidden", "Shown")}
         </div>
 
         <div class="settings-row">
@@ -4732,11 +5332,29 @@
             <strong>Hide Teleshopping &amp; Paid Programming</strong>
             <span>Automatically hides overnight Teleshopping / Shop on TV blocks in the EPG grid.</span>
           </div>
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
-            <input id="settingHideTeleToggle" type="checkbox" ${state.hideTeleshopping ? "checked" : ""} />
-            ${state.hideTeleshopping ? "Hidden" : "Shown"}
-          </label>
+          ${toggleHtml("settingHideTeleToggle", state.hideTeleshopping, "Hidden", "Shown")}
         </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Highlight Critic's Choice Stars (★)</strong>
+            <span>Radio Times-style gold ★ stars next to What to Watch &amp; What's New picks.</span>
+          </div>
+          ${toggleHtml("settingShowStarsToggle", state.showEditorialStars, "Shown", "Hidden")}
+        </div>
+
+        <div class="settings-row">
+          <div class="settings-row-label">
+            <strong>Show NEW &amp; Repeat (R) Badges</strong>
+            <span>Display premiere NEW tags and verified (R) repeat markers across the guide.</span>
+          </div>
+          ${toggleHtml("settingShowBadgesToggle", state.showStatusBadges, "Shown", "Hidden")}
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h2>🔔 Reminders, Help &amp; Setup</h2>
+        <p class="settings-card-desc">Configure broadcast reminder alerts or re-run the onboarding guide.</p>
 
         <div class="settings-row">
           <div class="settings-row-label">
@@ -4762,9 +5380,9 @@
       </div>
 
       <div class="settings-card">
-        <h2>Data Saver &amp; Anti-Burst Sync Controls</h2>
+        <h2>⚡ Data Saver &amp; Sync Controls</h2>
         <p class="settings-card-desc">
-          Minimises external API pulls using polite batching (2 chunks at a time), request deduplication, 429/503 cooldowns, and local caching.
+          Minimises external API pulls using polite batching, request deduplication, 429/503 cooldowns, and local caching.
         </p>
 
         <div class="settings-row">
@@ -4772,10 +5390,7 @@
             <strong>Low-Data Mode</strong>
             <span>Extends EPG cache to 2 hours and disables background auto-refresh polling (on-demand only).</span>
           </div>
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
-            <input id="settingLowDataToggle" type="checkbox" ${state.lowDataMode ? "checked" : ""} />
-            ${state.lowDataMode ? "Enabled (2h cache)" : "Off"}
-          </label>
+          ${toggleHtml("settingLowDataToggle", state.lowDataMode, "2h Cache", "Off")}
         </div>
 
         <div class="settings-row">
@@ -4783,10 +5398,7 @@
             <strong>Debug Mode (Data Pull Inspector)</strong>
             <span>Shows a live floating console with API requests, latencies, cache hits, fallbacks, and 429 cooldowns.</span>
           </div>
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; font-size:13px;">
-            <input id="settingDebugModeToggle" type="checkbox" ${state.debugMode ? "checked" : ""} />
-            ${state.debugMode ? "Enabled" : "Off"}
-          </label>
+          ${toggleHtml("settingDebugModeToggle", state.debugMode, "Enabled", "Off")}
         </div>
 
         <div class="settings-row" style="flex-wrap:wrap; gap:10px;">
@@ -4995,6 +5607,80 @@
         renderSettings();
         window.scrollTo({ left: 0, behavior: "instant" });
         showToast(state.hideTeleshopping ? "Overnight Teleshopping blocks hidden" : "Teleshopping blocks shown");
+      };
+    }
+
+    const timeFmtEl = document.getElementById("settingTimeFormatSelect");
+    if (timeFmtEl) {
+      timeFmtEl.onchange = (e) => {
+        state.timeFormat = e.target.value === "12h" ? "12h" : "24h";
+        localStorage.setItem("onair_time_format", state.timeFormat);
+        if (state.view === "epg") renderEPG(false);
+        showToast(`Clock format set to ${state.timeFormat === "12h" ? "12-Hour (am/pm)" : "24-Hour"}`);
+      };
+    }
+
+    const startTimeEl = document.getElementById("settingStartTimeSelect");
+    if (startTimeEl) {
+      startTimeEl.onchange = (e) => {
+        state.defaultStartTime = e.target.value || "now";
+        localStorage.setItem("onair_start_time", state.defaultStartTime);
+        showToast("Default TV Guide start time updated");
+      };
+    }
+
+    const hidePlusOneEl = document.getElementById("settingHidePlusOneToggle");
+    if (hidePlusOneEl) {
+      hidePlusOneEl.onchange = (e) => {
+        state.hidePlusOne = Boolean(e.target.checked);
+        localStorage.setItem("onair_hide_plus_one", state.hidePlusOne ? "1" : "0");
+        if (state.view === "epg") renderEPG(false);
+        renderSettings();
+        showToast(state.hidePlusOne ? "+1 timeshift channels hidden" : "+1 timeshift channels shown");
+      };
+    }
+
+    const genreColorsEl = document.getElementById("settingGenreColorsToggle");
+    if (genreColorsEl) {
+      genreColorsEl.onchange = (e) => {
+        state.showGenreColors = Boolean(e.target.checked);
+        localStorage.setItem("onair_genre_colors", state.showGenreColors ? "1" : "0");
+        if (el.epgGrid) el.epgGrid.classList.toggle("no-genre-colors", !state.showGenreColors);
+        renderSettings();
+        showToast(state.showGenreColors ? "Genre colour bars enabled" : "Minimalist mode (genre bars off)");
+      };
+    }
+
+    const dimPastEl = document.getElementById("settingDimPastToggle");
+    if (dimPastEl) {
+      dimPastEl.onchange = (e) => {
+        state.dimPastShows = Boolean(e.target.checked);
+        localStorage.setItem("onair_dim_past", state.dimPastShows ? "1" : "0");
+        if (state.view === "epg") renderEPG(false);
+        renderSettings();
+        showToast(state.dimPastShows ? "Finished shows dimmed" : "All shows shown at full brightness");
+      };
+    }
+
+    const showStarsEl = document.getElementById("settingShowStarsToggle");
+    if (showStarsEl) {
+      showStarsEl.onchange = (e) => {
+        state.showEditorialStars = Boolean(e.target.checked);
+        localStorage.setItem("onair_show_stars", state.showEditorialStars ? "1" : "0");
+        if (state.view === "epg") renderEPG(false);
+        renderSettings();
+        showToast(state.showEditorialStars ? "Critic's Choice ★ stars shown" : "Critic's Choice ★ stars hidden");
+      };
+    }
+
+    const showBadgesEl = document.getElementById("settingShowBadgesToggle");
+    if (showBadgesEl) {
+      showBadgesEl.onchange = (e) => {
+        state.showStatusBadges = Boolean(e.target.checked);
+        localStorage.setItem("onair_show_badges", state.showStatusBadges ? "1" : "0");
+        if (state.view === "epg") renderEPG(false);
+        renderSettings();
+        showToast(state.showStatusBadges ? "NEW & Repeat (R) badges shown" : "NEW & Repeat (R) badges hidden");
       };
     }
 
