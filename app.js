@@ -3807,14 +3807,22 @@
     const ch = getChannelById(channelId);
     if (!ch) return;
 
+    const todayIso = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    let anchorDay = state.dayOffset || 0;
+    if (state.timeMachineDate) {
+      const diff = getAirDateDiffDays(todayIso, state.timeMachineDate);
+      if (diff !== null) anchorDay = diff;
+    }
+
     const viewer = {
       id: `${ch.id}-${Date.now()}`,
       ch,
-      minDay: restoreState && typeof restoreState.minDay === "number" ? restoreState.minDay : -7,
-      maxDay: restoreState && typeof restoreState.maxDay === "number" ? restoreState.maxDay : 7,
-      minLimit: -30,
-      maxLimit: 14,
-      activeDay: restoreState && typeof restoreState.activeDay === "number" ? restoreState.activeDay : 0,
+      anchorDay,
+      minDay: restoreState && typeof restoreState.minDay === "number" ? restoreState.minDay : anchorDay - 7,
+      maxDay: restoreState && typeof restoreState.maxDay === "number" ? restoreState.maxDay : anchorDay + 7,
+      minLimit: anchorDay - 30,
+      maxLimit: anchorDay + 14,
+      activeDay: restoreState && typeof restoreState.activeDay === "number" ? restoreState.activeDay : anchorDay,
       query: (restoreState && restoreState.query) || "",
       hideRepeats: Boolean(restoreState && restoreState.hideRepeats),
       queue: [],
@@ -3980,7 +3988,10 @@
     };
 
     const buildDaySectionHtml = (d) => {
-      const progs = getSchedule(ch.id, d, true);
+      let progs = getSchedule(ch.id, d, true);
+      if (state.timeMachineDate && d === viewer.anchorDay && timeMachineEpg && Array.isArray(timeMachineEpg[ch.sid]) && timeMachineEpg[ch.sid].length) {
+        progs = timeMachineEpg[ch.sid];
+      }
       const heading = formatChannelViewerDayHeading(d);
       const badgeCls = d === 0 ? "is-today" : d < 0 ? "is-past" : "is-future";
       const fetchKey = `${ch.sid}|${d}`;
@@ -4202,8 +4213,12 @@
       viewer.scrolledToNow = true;
     });
 
-    // Prioritize Today, Tomorrow, Yesterday, then radiate outward to ±7 days
-    const priorityOrder = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
+    // Prioritize active/Time Machine day first, then radiate outward to ±7 days around it
+    const priorityOrder = [viewer.activeDay];
+    for (let step = 1; step <= 7; step++) {
+      if (viewer.activeDay + step <= viewer.maxDay) priorityOrder.push(viewer.activeDay + step);
+      if (viewer.activeDay - step >= viewer.minDay) priorityOrder.push(viewer.activeDay - step);
+    }
     enqueueChannelDays(priorityOrder);
 
     // Wire interactive controls inside the Channel Viewer
@@ -4240,6 +4255,19 @@
     const jumpNowBtn = document.getElementById("chViewerJumpNowBtn");
     if (jumpNowBtn) {
       jumpNowBtn.onclick = () => {
+        if (0 < viewer.minDay || 0 > viewer.maxDay) {
+          viewer.anchorDay = 0;
+          viewer.minDay = -7;
+          viewer.maxDay = 7;
+          viewer.minLimit = -30;
+          viewer.maxLimit = 14;
+          viewer.activeDay = 0;
+          renderViewerDayStrip();
+          renderViewerDays(false);
+          enqueueChannelDays([0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7]);
+          requestAnimationFrame(() => scrollViewerToDay(0, true));
+          return;
+        }
         setViewerActiveDay(0, true);
         scrollViewerToDay(0, true);
       };
