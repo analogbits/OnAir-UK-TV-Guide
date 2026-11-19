@@ -2310,11 +2310,29 @@
         .map((entry) => (entry.kind === "stream" ? renderStreamCard(entry.item) : renderTvPickCard(entry)))
         .join("") || `<div class="empty-state" style="grid-column:1/-1;">No highlights found for this filter.</div>`;
 
-    // 2. Interest Pills
-    el.interestPills.innerHTML = INTEREST_CATEGORIES.map(
-      (cat) =>
-        `<button class="pill-btn ${state.interests.has(cat) ? "interest-pill-selected" : ""}" data-interest="${cat}" type="button">${state.interests.has(cat) ? "✓ " : "+ "}${cat}</button>`
-    ).join("");
+    // 2. Interest Pills (compact by default: top 8 + any selected, with "+ More Genres" toggle)
+    const primaryInterests = INTEREST_CATEGORIES.slice(0, 8);
+    const visibleInterests = state.interestsExpanded
+      ? INTEREST_CATEGORIES
+      : INTEREST_CATEGORIES.filter((cat, idx) => idx < 8 || state.interests.has(cat));
+    const hiddenInterestCount = INTEREST_CATEGORIES.length - visibleInterests.length;
+    el.interestPills.innerHTML =
+      visibleInterests
+        .map(
+          (cat) =>
+            `<button class="pill-btn ${state.interests.has(cat) ? "interest-pill-selected" : ""}" data-interest="${escapeHtml(cat)}" type="button">${state.interests.has(cat) ? "✓ " : "+ "}${escapeHtml(cat)}</button>`
+        )
+        .join("") +
+      (hiddenInterestCount > 0 || state.interestsExpanded
+        ? `<button id="toggleMoreInterestsBtn" class="pill-btn more-toggle-pill" type="button">${state.interestsExpanded ? "Show Fewer ▴" : `+ ${hiddenInterestCount} More Genres ▾`}</button>`
+        : "");
+    const moreIntBtn = document.getElementById("toggleMoreInterestsBtn");
+    if (moreIntBtn) {
+      moreIntBtn.onclick = () => {
+        state.interestsExpanded = !state.interestsExpanded;
+        renderWhatToWatch();
+      };
+    }
 
     // 3. Tailored Recommendations across Live TV, Catch-Up & Streaming
     const selected = state.interests;
@@ -2389,6 +2407,14 @@
     el.streamWindowPills.innerHTML = windows
       .map((w) => `<button class="pill-btn ${state.streamWindow === w ? "is-active" : ""}" data-swin="${w}" type="button">${w}</button>`)
       .join("");
+
+    const streamSum = document.getElementById("mobileStreamFiltersSummary");
+    if (streamSum) {
+      const pLbl = state.streamPlatform === "All" ? "All Platforms" : state.streamPlatform;
+      const tLbl = state.streamType === "All" ? "All Types" : state.streamType;
+      const gLbl = state.streamGenre === "All" ? "All Genres" : state.streamGenre;
+      streamSum.textContent = `${pLbl} • ${tLbl} • ${gLbl}`;
+    }
   }
 
   let weeklyPickIndex = 0;
@@ -5142,6 +5168,15 @@
       mobileFiltersToggleBtn.addEventListener("click", () => {
         const expanded = epgControlsBar.classList.toggle("is-mobile-expanded");
         mobileFiltersToggleBtn.setAttribute("aria-expanded", String(expanded));
+      });
+    }
+
+    const mobileStreamToggleBtn = document.getElementById("mobileStreamFiltersToggleBtn");
+    const streamFiltersCard = document.getElementById("streamingFiltersCard");
+    if (mobileStreamToggleBtn && streamFiltersCard) {
+      mobileStreamToggleBtn.addEventListener("click", () => {
+        const expanded = streamFiltersCard.classList.toggle("is-mobile-expanded");
+        mobileStreamToggleBtn.setAttribute("aria-expanded", String(expanded));
       });
     }
 

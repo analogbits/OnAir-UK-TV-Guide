@@ -3747,3 +3747,99 @@ select {
   font-size: 13.5px;
   color: var(--text-primary);
 }
+
+/* ==========================================================================
+   Clean Anti-Bloat & Mobile Simplicity Polish
+   ========================================================================== */
+.more-toggle-pill {
+  border-style: dashed !important;
+  color: var(--accent-teal) !important;
+  font-weight: 700 !important;
+}
+
+/* Keep large category bars on a single crisp horizontal scroll row (no multi-line bloat) */
+.controls-bar .filter-pills,
+#wtwWatchAhead .filter-pills,
+.streaming-filters-card .filter-pills {
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.controls-bar .filter-pills::-webkit-scrollbar,
+#wtwWatchAhead .filter-pills::-webkit-scrollbar,
+.streaming-filters-card .filter-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.controls-bar .filter-pills .pill-btn,
+#wtwWatchAhead .filter-pills .pill-btn,
+.streaming-filters-card .filter-pills .pill-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mobile-stream-filters-bar {
+  padding: 2px 0;
+}
+
+@media (max-width: 768px) {
+  #streamingFiltersCard {
+    padding: 10px 12px;
+  }
+
+  #streamingFiltersCard:not(.is-mobile-expanded) .streaming-filters-body {
+    display: none !important;
+  }
+
+  #streamingFiltersCard.is-mobile-expanded .mobile-stream-filters-bar {
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  #streamingFiltersCard.is-mobile-expanded .mobile-filters-caret {
+    transform: rotate(180deg);
+  }
+
+  /* Keep Channel Viewer & Setup Wizard airy and uncluttered on phones */
+  .ch-viewer-about {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .ch-viewer-badge-lg {
+    width: 44px;
+    height: 44px;
+    font-size: 13px;
+    border-radius: 11px;
+  }
+
+  .ch-viewer-list-wrap {
+    max-height: 52dvh;
+  }
+
+  .onboard-card {
+    max-height: 88dvh;
+    overflow-y: auto;
+  }
+
+  .onboard-prefs-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .onboard-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Compact What to Watch interest card on mobile */
+  .interest-picker-card {
+    padding: 14px 12px;
+  }
+}
