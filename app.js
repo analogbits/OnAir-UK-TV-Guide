@@ -1262,23 +1262,74 @@
       .join("");
   }
 
+  function addDaysToIsoDate(isoDate, deltaDays) {
+    const dt = new Date(`${isoDate}T12:00:00Z`);
+    dt.setUTCDate(dt.getUTCDate() + deltaDays);
+    return dt.toISOString().slice(0, 10);
+  }
+
   function renderDateStrip() {
     const days = [];
-    const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" });
-    for (let i = -7; i <= 6; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const label = i === -1 ? "Yesterday" : i === 0 ? "Today" : i === 1 ? "Tomorrow" : formatter.format(d);
-      const pastClass = i < 0 ? "is-past-day" : "";
-      days.push(
-        `<button class="date-btn ${pastClass} ${!state.timeMachineDate && state.dayOffset === i ? "is-active" : ""}" data-day="${i}" type="button" role="tab">${label}</button>`
-      );
+    const nowDate = new Date();
+    const curYear = nowDate.getFullYear();
+    const todayIso = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const yestIso = getSkyDateStrForOffset(-1).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const tomIso = getSkyDateStrForOffset(1).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+
+    if (state.timeMachineDate) {
+      const baseIso = state.timeMachineDate;
+      const baseYear = Number(baseIso.slice(0, 4));
+      const fmt = new Intl.DateTimeFormat("en-GB", baseYear !== curYear
+        ? { weekday: "short", day: "numeric", month: "short", year: "2-digit" }
+        : { weekday: "short", day: "numeric", month: "short" });
+      for (let i = -7; i <= 7; i++) {
+        const iso = addDaysToIsoDate(baseIso, i);
+        const dt = new Date(`${iso}T12:00:00Z`);
+        const label = iso === todayIso ? "Today" : iso === yestIso ? "Yesterday" : iso === tomIso ? "Tomorrow" : fmt.format(dt);
+        const isPast = iso < todayIso ? "is-past-day" : "";
+        const isActive = iso === baseIso ? "is-active" : "";
+        days.push(
+          `<button class="date-btn ${isPast} ${isActive}" data-tm-date="${iso}" type="button" role="tab">${escapeHtml(label)}</button>`
+        );
+      }
+    } else {
+      const formatter = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" });
+      for (let i = -7; i <= 6; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() + i);
+        const label = i === -1 ? "Yesterday" : i === 0 ? "Today" : i === 1 ? "Tomorrow" : formatter.format(d);
+        const pastClass = i < 0 ? "is-past-day" : "";
+        days.push(
+          `<button class="date-btn ${pastClass} ${state.dayOffset === i ? "is-active" : ""}" data-day="${i}" type="button" role="tab">${label}</button>`
+        );
+      }
     }
     el.dateStrip.innerHTML = days.join("");
     const activeBtn = el.dateStrip.querySelector(".date-btn.is-active");
     if (activeBtn && activeBtn.scrollIntoView) {
       activeBtn.scrollIntoView({ inline: "center", block: "nearest" });
     }
+  }
+
+  function stepEpgDay(delta) {
+    if (state.timeMachineDate) {
+      const nextIso = addDaysToIsoDate(state.timeMachineDate, delta);
+      const todayIso = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+      if (nextIso === todayIso) {
+        state.dayOffset = 0;
+        exitTimeMachine();
+      } else {
+        loadTimeMachineDate(nextIso, false);
+      }
+      return;
+    }
+    const targetDay = state.dayOffset + delta;
+    if (targetDay < -7 || targetDay > 6) {
+      const targetIso = getSkyDateStrForOffset(targetDay).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+      loadTimeMachineDate(targetIso, false);
+      return;
+    }
+    scrollToDayOffset(targetDay);
   }
 
   // ========================================================================
@@ -4701,6 +4752,19 @@
         return;
       }
 
+      const tmDateBtn = e.target.closest("[data-tm-date]");
+      if (tmDateBtn) {
+        const targetIso = tmDateBtn.dataset.tmDate;
+        const todayIso = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+        if (targetIso === todayIso) {
+          state.dayOffset = 0;
+          exitTimeMachine();
+        } else {
+          loadTimeMachineDate(targetIso, false);
+        }
+        return;
+      }
+
       const dateBtn = e.target.closest("[data-day]");
       if (dateBtn) {
         const targetDay = Number(dateBtn.dataset.day);
@@ -4756,8 +4820,24 @@
         return;
       }
 
+      const prevDayBtn = e.target.closest("#prevDayBtn");
+      if (prevDayBtn) {
+        stepEpgDay(-1);
+        return;
+      }
+
+      const nextDayBtn = e.target.closest("#nextDayBtn");
+      if (nextDayBtn) {
+        stepEpgDay(1);
+        return;
+      }
+
       const jumpBtn = e.target.closest("[data-jump]");
       if (jumpBtn) {
+        if (jumpBtn.dataset.jump === "now" && state.timeMachineDate) {
+          state.dayOffset = 0;
+          exitTimeMachine();
+        }
         scrollEpgToHour(jumpBtn.dataset.jump);
         return;
       }
@@ -4964,10 +5044,10 @@
           scrollEpgToHour("now");
         } else if (e.key === "p" || e.key === "P") {
           scrollEpgToHour(20);
-        } else if (e.key === "[" && state.dayOffset > -7) {
-          scrollToDayOffset(state.dayOffset - 1);
-        } else if (e.key === "]" && state.dayOffset < 6) {
-          scrollToDayOffset(state.dayOffset + 1);
+        } else if (e.key === "[") {
+          stepEpgDay(-1);
+        } else if (e.key === "]") {
+          stepEpgDay(1);
         } else if (e.key === "ArrowRight" && el.epgScrollContainer) {
           e.preventDefault();
           el.epgScrollContainer.scrollBy({ left: 120 * PIXELS_PER_MIN, behavior: "smooth" });
