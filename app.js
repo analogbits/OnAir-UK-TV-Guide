@@ -1398,9 +1398,10 @@
                   const pEnd = Math.max(pStart + 5, p.endMin);
                   const left = dayStartPx + (pStart * PIXELS_PER_MIN);
                   const width = Math.max((pEnd - pStart) * PIXELS_PER_MIN - 3, 40);
-                  const isToday = d === 0;
-                  const isLive = isToday && nowMin >= p.startMin && nowMin < p.endMin;
-                  const isPast = (d < 0) || (isToday && nowMin >= p.endMin);
+                  const todayIsoStr = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+                  const isRealToday = state.timeMachineDate ? state.timeMachineDate === todayIsoStr : d === 0;
+                  const isLive = isRealToday && nowMin >= p.startMin && nowMin < p.endMin;
+                  const isPast = !state.timeMachineDate && ((d < 0) || (isRealToday && nowMin >= p.endMin));
                   const starInfo = getEditorialStarInfo(p, ch);
                   const starHtml = starInfo
                     ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
@@ -1473,9 +1474,13 @@
       });
     }
 
-    // Current time vertical line (only on Today)
+    // Current time vertical line (red on real Today; subtle grey reference line in Time Machine)
     let nowLineHtml = "";
-    if (dayOffsets.includes(0) && nowMin >= 0 && nowMin <= 1440) {
+    const todayIsoForLine = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    if (state.timeMachineDate && state.timeMachineDate !== todayIsoForLine && nowMin >= 0 && nowMin <= 1440) {
+      const refOffsetPx = nowMin * PIXELS_PER_MIN;
+      nowLineHtml = `<div class="epg-now-line is-time-machine" title="Current time of day (${formatTime(nowMin)})" style="left:calc(var(--epg-channel-col) + ${refOffsetPx}px);"></div>`;
+    } else if (!state.timeMachineDate && dayOffsets.includes(0) && nowMin >= 0 && nowMin <= 1440) {
       const todayIndex = 0 - startDay;
       const nowOffsetPx = (todayIndex * dayWidth) + (nowMin * PIXELS_PER_MIN);
       nowLineHtml = `<div class="epg-now-line" style="left:calc(var(--epg-channel-col) + ${nowOffsetPx}px);"></div>`;
@@ -3679,7 +3684,8 @@
     const hasRem = state.reminders.has(prog.id);
     const chNum = ch.numbers[state.platform];
     const nowMin = getNowMinutes();
-    const isLive = resolvedDayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
+    const todayIsoModal = getSkyDateStrForOffset(0).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const isLive = (!state.timeMachineDate || state.timeMachineDate === todayIsoModal) && resolvedDayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
     const starInfo = getEditorialStarInfo(prog, ch);
     const bStatus = getBroadcastStatus(prog, ch, resolvedDayOffset);
