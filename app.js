@@ -1444,12 +1444,21 @@
       ${nowLineHtml}
     `;
 
-    if (prevScrollLeft !== null && prevScrollLeft > 0) {
+    if (!epgContinuous.initialScrolled) {
+      epgContinuous.initialScrolled = true;
+      // Jump synchronously & instantly to Today @ Right Now so the user NEVER starts on Yesterday
+      epgContinuous.programmaticScrollUntil = Date.now() + 800;
+      const todayIdx = Math.max(0, 0 - startDay);
+      const startNowPx = Math.max(0, (todayIdx * dayWidth) + (Math.max(0, nowMin - 45) * PIXELS_PER_MIN));
+      if (el.epgScrollContainer) {
+        el.epgScrollContainer.scrollLeft = startNowPx;
+        requestAnimationFrame(() => {
+          if (el.epgScrollContainer) el.epgScrollContainer.scrollLeft = startNowPx;
+        });
+      }
+    } else if (prevScrollLeft !== null && prevScrollLeft > 0) {
       const scaledScroll = prevPpm !== PIXELS_PER_MIN ? Math.round(prevScrollLeft * (PIXELS_PER_MIN / prevPpm)) : prevScrollLeft;
       el.epgScrollContainer.scrollLeft = scaledScroll;
-    } else if (!epgContinuous.initialScrolled) {
-      epgContinuous.initialScrolled = true;
-      requestAnimationFrame(() => scrollEpgToHour("now"));
     }
   }
 
@@ -1461,13 +1470,14 @@
     pill.classList.add(state.timeMachineDate ? "is-past" : dayOffset === 0 ? "is-today" : dayOffset < 0 ? "is-past" : "is-future");
   }
 
-  function scrollEpgToHour(hourVal) {
+  function scrollEpgToHour(hourVal, instant = false) {
+    epgContinuous.programmaticScrollUntil = Date.now() + (instant ? 300 : 800);
     if (state.timeMachineDate) {
       const targetMinutes = hourVal === "now" ? getNowMinutes() : Number(hourVal) * 60;
       const offsetMinutes = Math.max(0, targetMinutes - 45);
       el.epgScrollContainer.scrollTo({
         left: offsetMinutes * PIXELS_PER_MIN,
-        behavior: "smooth"
+        behavior: instant ? "auto" : "smooth"
       });
       return;
     }
@@ -1502,16 +1512,22 @@
 
     const dayIndex = targetDay - epgContinuous.startDay;
     const totalTargetMin = (dayIndex * 1440) + targetMinInDay;
+    const targetPx = totalTargetMin * PIXELS_PER_MIN;
 
-    requestAnimationFrame(() => {
-      el.epgScrollContainer.scrollTo({
-        left: totalTargetMin * PIXELS_PER_MIN,
-        behavior: "smooth"
+    if (instant) {
+      el.epgScrollContainer.scrollLeft = targetPx;
+    } else {
+      requestAnimationFrame(() => {
+        el.epgScrollContainer.scrollTo({
+          left: targetPx,
+          behavior: "smooth"
+        });
       });
-    });
+    }
   }
 
   function scrollToDayOffset(targetDay, hourOffset = 0) {
+    epgContinuous.programmaticScrollUntil = Date.now() + 850;
     if (state.timeMachineDate) {
       exitTimeMachine();
     }
@@ -1543,6 +1559,8 @@
 
     el.epgScrollContainer.addEventListener("scroll", () => {
       if (state.view !== "epg" || state.timeMachineDate) return;
+      if (!epgContinuous.initialScrolled) return;
+      if (epgContinuous.programmaticScrollUntil && Date.now() < epgContinuous.programmaticScrollUntil) return;
 
       const scrollLeft = el.epgScrollContainer.scrollLeft;
       const clientWidth = el.epgScrollContainer.clientWidth;
@@ -1578,8 +1596,9 @@
       }
 
       // Auto-extend timeline when scrolling near LEFT edge (past days down to -7)
-      if (scrollLeft < 1800 && epgContinuous.startDay > -7 && !epgContinuous.extending) {
+      if (scrollLeft < 1200 && epgContinuous.startDay > -7 && !epgContinuous.extending) {
         epgContinuous.extending = true;
+        epgContinuous.programmaticScrollUntil = Date.now() + 400;
         const prevStart = epgContinuous.startDay;
         const newStart = Math.max(-7, prevStart - 2);
         const addedDays = prevStart - newStart;
