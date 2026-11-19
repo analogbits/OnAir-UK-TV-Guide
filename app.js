@@ -3758,6 +3758,7 @@
       maxDay: 7,
       minLimit: -30,
       maxLimit: 14,
+      activeDay: 0,
       query: "",
       hideRepeats: false,
       queue: [],
@@ -3891,18 +3892,34 @@
       }
     });
 
+    const setViewerActiveDay = (d, centerInStrip = true) => {
+      if (viewer.activeDay === d) return;
+      viewer.activeDay = d;
+      const strip = document.getElementById("chViewerDayStrip");
+      if (!strip) return;
+      strip.querySelectorAll(".date-btn").forEach((b) => {
+        b.classList.toggle("is-active", Number(b.dataset.chvJumpDay) === d);
+      });
+      if (centerInStrip) {
+        const activeBtn = strip.querySelector(`[data-chv-jump-day="${d}"]`);
+        if (activeBtn && activeBtn.scrollIntoView) {
+          activeBtn.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+        }
+      }
+    };
+
     const renderViewerDayStrip = () => {
       const strip = document.getElementById("chViewerDayStrip");
       if (!strip) return;
       let html = "";
       for (let d = viewer.minDay; d <= viewer.maxDay; d++) {
-        const cls = d === 0 ? "is-active" : "";
+        const cls = d === viewer.activeDay ? "is-active" : "";
         html += `<button type="button" class="date-btn ${cls}" data-chv-jump-day="${d}">${escapeHtml(formatDayShort(d))}</button>`;
       }
       strip.innerHTML = html;
-      const todayBtn = strip.querySelector('[data-chv-jump-day="0"]');
-      if (todayBtn && !viewer.scrolledToNow && todayBtn.scrollIntoView) {
-        todayBtn.scrollIntoView({ inline: "center", block: "nearest" });
+      const activeBtn = strip.querySelector(`[data-chv-jump-day="${viewer.activeDay}"]`);
+      if (activeBtn && !viewer.scrolledToNow && activeBtn.scrollIntoView) {
+        activeBtn.scrollIntoView({ inline: "center", block: "nearest" });
       }
     };
 
@@ -4150,13 +4167,18 @@
         const btn = e.target.closest("[data-chv-jump-day]");
         if (!btn) return;
         const d = Number(btn.dataset.chvJumpDay);
-        dayStrip.querySelectorAll(".date-btn").forEach((b) => b.classList.toggle("is-active", Number(b.dataset.chvJumpDay) === d));
+        setViewerActiveDay(d, true);
         scrollViewerToDay(d, d === 0);
       });
     }
 
     const jumpNowBtn = document.getElementById("chViewerJumpNowBtn");
-    if (jumpNowBtn) jumpNowBtn.onclick = () => scrollViewerToDay(0, true);
+    if (jumpNowBtn) {
+      jumpNowBtn.onclick = () => {
+        setViewerActiveDay(0, true);
+        scrollViewerToDay(0, true);
+      };
+    }
 
     const searchInp = document.getElementById("chViewerSearch");
     if (searchInp) {
@@ -4181,11 +4203,29 @@
     const laterBtn = document.getElementById("chViewerLoadLaterBtn");
     if (laterBtn) laterBtn.onclick = loadMoreLaterDays;
 
-    // Auto-load past ±7 days smoothly when scrolling near top or bottom of the list!
+    // Live scroll-spy for active day bar + auto-load past ±7 days smoothly when scrolling near top or bottom!
     const listWrap = document.getElementById("chViewerListWrap");
     if (listWrap) {
       listWrap.addEventListener("scroll", () => {
-        if (!viewer.scrolledToNow || viewer.extending || viewer.query) return;
+        if (!viewer.scrolledToNow) return;
+
+        // Sync the top day bar with whichever day section is currently at the top of the viewport
+        const sections = listWrap.querySelectorAll("[data-chv-day-section]");
+        const topThreshold = listWrap.scrollTop + 44;
+        let currentDay = viewer.activeDay;
+        for (let i = 0; i < sections.length; i++) {
+          const sec = sections[i];
+          if (sec.offsetTop <= topThreshold) {
+            currentDay = Number(sec.dataset.chvDaySection);
+          } else {
+            break;
+          }
+        }
+        if (currentDay !== viewer.activeDay) {
+          setViewerActiveDay(currentDay, true);
+        }
+
+        if (viewer.extending || viewer.query) return;
         if (listWrap.scrollTop < 120 && viewer.minDay > viewer.minLimit) {
           loadMoreEarlierDays();
         } else if (listWrap.scrollTop + listWrap.clientHeight > listWrap.scrollHeight - 220 && viewer.maxDay < viewer.maxLimit) {
