@@ -754,6 +754,12 @@ select {
   display: flex;
   height: var(--epg-row-height);
   border-bottom: 1px solid var(--border-subtle);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
+}
+
+.epg-grid.is-compact .epg-row {
+  contain-intrinsic-size: auto 54px;
 }
 
 .epg-row:last-child {

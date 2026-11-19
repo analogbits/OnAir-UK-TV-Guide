@@ -30,7 +30,7 @@
   // Continuous EPG configuration
   const epgContinuous = {
     startDay: -1, // Yesterday (-1)
-    endDay: 2,    // Day +2 (Yesterday, Today, Tomorrow, Day +2 = 4 consecutive days)
+    endDay: 1,    // Tomorrow (+1) initially (3 days = fast render; auto-extends to +6 / -7 on scroll)
     maxDay: 6,    // Up to Day +6 (full 7-day UK TV guide)
     minDay: -7,
     initialScrolled: false,
@@ -322,6 +322,15 @@
     return null; // null = not fetched yet
   }
 
+  let _bgEpgRenderTimer = null;
+  function scheduleBackgroundEpgRender(delayMs = 260) {
+    if (_bgEpgRenderTimer) return;
+    _bgEpgRenderTimer = setTimeout(() => {
+      _bgEpgRenderTimer = null;
+      if (state.view === "epg") renderEPG(false);
+    }, delayMs);
+  }
+
   // Queue day fetches sequentially to prevent rate limits or 429 cooldowns from awk.epgsky.com
   const dayFetchQueue = [];
   let isProcessingDayQueue = false;
@@ -431,9 +440,16 @@
         if (!currentMap[sid]) currentMap[sid] = [];
       });
       liveEpgByDay.set(dayOffset, currentMap);
+      _earlierAiringsDirty = true;
 
-      if (state.view === "epg") renderEPG(false);
-      else if (state.view === "now-next") renderNowNext(false);
+      if (state.view === "epg") {
+        // Render immediately for the first batch of the active day; coalesce all background/subsequent batches
+        if (dayOffset === state.dayOffset && i === 0) {
+          renderEPG(false);
+        } else {
+          scheduleBackgroundEpgRender(280);
+        }
+      } else if (state.view === "now-next") renderNowNext(false);
       else if (state.view === "what-to-watch") renderWhatToWatch();
     }
   }
@@ -559,34 +575,71 @@
     return Math.round(diffMs / 86400000);
   }
 
+  let _earlierAiringsIndex = new Map();
+  let _earlierAiringsDirty = true;
+
+  function ensureEarlierAiringsIndex() {
+    if (!_earlierAiringsDirty) return _earlierAiringsIndex;
+    _earlierAiringsDirty = false;
+    const idx = new Map();
+    liveEpgByDay.forEach((dayMap, d) => {
+      if (!dayMap || typeof dayMap !== "object") return;
+      const sids = Object.keys(dayMap);
+      for (let sIdx = 0; sIdx < sids.length; sIdx++) {
+        const sid = sids[sIdx];
+        const evs = dayMap[sid];
+        if (!Array.isArray(evs) || !evs.length) continue;
+        for (let i = 0; i < evs.length; i++) {
+          const ev = evs[i];
+          if (!ev) continue;
+          let sNum = ev.seasonNumber;
+          let eNum = ev.episodeNumber;
+          if (!sNum || !eNum) {
+            const epStr = ev.ep;
+            if (epStr && epStr.indexOf("Series") !== -1) {
+              const m = epStr.match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
+              if (m) {
+                sNum = Number(m[1]);
+                eNum = Number(m[2]);
+              }
+            }
+          }
+          if (!sNum || !eNum) continue;
+          const normTitle = normalizeEditorialTitle(ev.title || "");
+          if (!normTitle) continue;
+          const key = `${sid}|${normTitle}|s${sNum}e${eNum}`;
+          const absMin = d * 1440 + (ev.startMin || 0);
+          const prev = idx.get(key);
+          if (prev === undefined || absMin < prev) {
+            idx.set(key, absMin);
+          }
+        }
+      }
+    });
+    _earlierAiringsIndex = idx;
+    return idx;
+  }
+
   function hasEarlierEpisodeAiringInMemory(prog, ch, dayOffset) {
     if (!prog || !ch || !ch.sid) return false;
-    const seMatch = String(prog.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
-    const sNum = prog.seasonNumber || (seMatch ? Number(seMatch[1]) : null);
-    const eNum = prog.episodeNumber || (seMatch ? Number(seMatch[2]) : null);
+    let sNum = prog.seasonNumber;
+    let eNum = prog.episodeNumber;
+    if (!sNum || !eNum) {
+      const epStr = prog.ep;
+      if (!epStr || epStr.indexOf("Series") === -1) return false;
+      const seMatch = epStr.match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
+      if (!seMatch) return false;
+      sNum = Number(seMatch[1]);
+      eNum = Number(seMatch[2]);
+    }
     if (!sNum || !eNum) return false;
     const normTitle = normalizeEditorialTitle(prog.title || "");
     if (!normTitle) return false;
 
-    for (let d = Math.max(-7, dayOffset - 7); d <= dayOffset; d++) {
-      const dayMap = liveEpgByDay.get(d);
-      const evs = dayMap && dayMap[ch.sid];
-      if (!Array.isArray(evs) || !evs.length) continue;
-      for (let i = 0; i < evs.length; i++) {
-        const other = evs[i];
-        if (!other || other.id === prog.id) continue;
-        if (d === dayOffset && (other.startMin || 0) >= (prog.startMin || 0)) continue;
-        const oSe = String(other.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
-        const oS = other.seasonNumber || (oSe ? Number(oSe[1]) : null);
-        const oE = other.episodeNumber || (oSe ? Number(oSe[2]) : null);
-        if (Number(oS) === Number(sNum) && Number(oE) === Number(eNum)) {
-          if (normalizeEditorialTitle(other.title || "") === normTitle) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
+    const idx = ensureEarlierAiringsIndex();
+    const earliest = idx.get(`${ch.sid}|${normTitle}|s${sNum}e${eNum}`);
+    if (earliest === undefined) return false;
+    return earliest < (dayOffset * 1440 + (prog.startMin || 0));
   }
 
   function getBroadcastStatus(prog, ch = null, dayOffset = null) {
@@ -6720,7 +6773,8 @@
           }
         });
         liveEpgByDay.set(dOff, currentMap);
-        if (state.view === "epg" && state.dayOffset === dOff) renderEPG(false);
+        _earlierAiringsDirty = true;
+        if (state.view === "epg" && state.dayOffset === dOff) scheduleBackgroundEpgRender(220);
         else if (state.view === "now-next" && dOff === 0) renderNowNext(false);
       }
     });
