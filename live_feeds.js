@@ -1764,16 +1764,14 @@ const ONAIR_LIVE = (() => {
             .replace(/[^a-z0-9+]/g, "")
             .trim();
 
+        const withinSevenDayWindow = dayOffset >= -7 && dayOffset <= 7;
         let fvByChannel = repoPastDay || (cache[`fv_${dateStr}`] && cache[`fv_${dateStr}`].byCh ? cache[`fv_${dateStr}`].byCh : null);
-        if (!fvByChannel) {
+        if (!fvByChannel && withinSevenDayWindow) {
           const fvUrl = `https://www.freeview.co.uk/api/tv-guide?nid=64257&start=${dayStartSec}`;
           let fvData = null;
-          for (const proxyUrl of [
-            `https://corsproxy.io/?${encodeURIComponent(fvUrl)}`,
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(fvUrl)}`
-          ]) {
+          for (const proxyUrl of buildProxyUrls(fvUrl, false)) {
             try {
-              const r = await fetchJson(proxyUrl);
+              const r = await fetchJson(proxyUrl, 5500);
               if (r && r.data && Array.isArray(r.data.programs)) {
                 fvData = r.data.programs;
                 break;
@@ -1844,10 +1842,9 @@ const ONAIR_LIVE = (() => {
             }
           }
 
-          // Backup #2: TVMaze UK linear broadcast
-          // Backup #2: tv24.co.uk single-day schedule backup (fetched lazily once per day if needed)
+          // Backup #2: tv24.co.uk single-day schedule backup (only within ±7d broadcast window; beyond that, skip straight to direct TVMaze UK)
           if (tv24ByChannel === undefined) {
-            tv24ByChannel = await fetchTv24DayMap(isoDate).catch(() => null);
+            tv24ByChannel = withinSevenDayWindow ? await fetchTv24DayMap(isoDate).catch(() => null) : null;
           }
           const tv24Events = tv24ByChannel && (tv24ByChannel[nk] || tv24ByChannel[nk.replace(/1$/, "")]);
           if (tv24Events && tv24Events.length > 0) {
@@ -1930,7 +1927,7 @@ const ONAIR_LIVE = (() => {
 
       cache[`epg_${dateStr}`] = dayCache;
       saveCache(cache);
-      if (!cache[`fv_bmeta_${dateStr}`]) {
+      if (!cache[`fv_bmeta_${dateStr}`] && dayOffset >= -7 && dayOffset <= 7) {
         fetchFreeviewBroadcastMeta(isoDate, dateStr, dayStartSec, cache, dayOffset).catch(() => {});
       }
     } finally {
