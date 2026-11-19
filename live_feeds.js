@@ -199,8 +199,9 @@ const ONAIR_LIVE = (() => {
             const bMin = Math.round((ev.startMin || 0) / 5) * 5;
             const hit = byTitleMin[`${tKey}|${bMin}`] || byTitleMin[`${tKey}|${bMin - 5}`] || byTitleMin[`${tKey}|${bMin + 5}`];
             if (hit) {
-              if (hit.isRepeat && !ev.isNew) {
+              if (hit.isRepeat && !/^New:\s*/i.test(ev.title || "")) {
                 ev.isRepeat = true;
+                ev.isNew = false;
                 ev.isFirstRunToday = false;
                 if (hit.firstShown) ev.firstShown = hit.firstShown;
                 updated++;
@@ -1639,13 +1640,14 @@ const ONAIR_LIVE = (() => {
                 tvmSlots.forEach((slot) => {
                   if (ev.seasonnumber && ev.episodenumber && slot.season && slot.number) {
                     if (Number(ev.seasonnumber) === Number(slot.season) && Number(ev.episodenumber) === Number(slot.number)) {
-                      if (slot.min === null || Math.abs(clampedStart - slot.min) <= 90 || slot.min <= 360) {
+                      // Require airtime match within ±90m (ignore overnight repeats when premiere is evening/daytime)
+                      if (slot.min === null || Math.abs(clampedStart - slot.min) <= 90) {
                         tvmMatchedNew = true;
                       }
                     } else {
                       tvmOtherEpToday = true;
                     }
-                  } else if (slot.min !== null && Math.abs(clampedStart - slot.min) <= 45) {
+                  } else if (slot.min !== null && slot.min > 0 && Math.abs(clampedStart - slot.min) <= 45) {
                     tvmMatchedNew = true;
                   }
                 });
@@ -1662,22 +1664,39 @@ const ONAIR_LIVE = (() => {
               const isSameDayChannelRepeat = Boolean(epSig && seenChannelEpisodes.has(epSig));
               if (epSig) seenChannelEpisodes.add(epSig);
 
-              const isExplicitNew =
-                Boolean(ev.new) ||
-                /^New:\s*/i.test(rawTitle) ||
-                /\b(brand[- ]new|new series|series premiere)\b/i.test(ev.sy || "") ||
-                (tvmMatchedNew && !(fvHit && fvHit.isRepeat) && !isSameDayChannelRepeat);
-
-              const isFirstRunToday = Boolean(isExplicitNew || (fvHit && fvHit.isFirstRun));
-              const isRepeat = !isExplicitNew && !isFirstRunToday && Boolean(
+              // 4. Hard Repeat / Disqualifier checks (always override Sky's loose ev.new flag!)
+              const chLabel = chNameBySid.get(String(sid)) || "";
+              const isPlusOneChannel = /\+1\b/i.test(chLabel);
+              const isOvernightRepeatWindow = clampedStart < 345 && genre !== "News" && genre !== "Sport"; // 00:00–05:44 late-night signed/repeat slot
+              const hasExplicitRepeatText =
+                /\b\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b|\bSigned repeat\b/i.test(ev.sy || "") ||
+                /\(R\)|\brepeat\b/i.test(rawTitle);
+              const hasHardRepeatSignal = Boolean(
                 ev.repeat ||
                 ev.r_flag ||
                 (fvHit && fvHit.isRepeat) ||
                 tvmOtherEpToday ||
                 isSameDayChannelRepeat ||
-                /\b\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b/i.test(ev.sy || "") ||
-                /\(R\)|\brepeat\b/i.test(rawTitle)
+                hasExplicitRepeatText ||
+                isPlusOneChannel
               );
+
+              const hasTitleNewPrefix = /^New:\s*/i.test(rawTitle);
+              const hasSynopsisNewTag = /\b(brand[- ]new|new series|series premiere)\b/i.test(ev.sy || "");
+
+              // Sky's ev.new is often true on late-night/same-week repeats of a current series (e.g. 00:10 Graham Norton)
+              // Only trust ev.new when there is NO repeat signal, NOT a Film, and NOT in the overnight repeat window
+              const skyNewTrusted = Boolean(ev.new) && !hasHardRepeatSignal && !isOvernightRepeatWindow && genre !== "Film";
+
+              const isExplicitNew = !hasHardRepeatSignal && (
+                hasTitleNewPrefix ||
+                (hasSynopsisNewTag && !isOvernightRepeatWindow) ||
+                tvmMatchedNew ||
+                skyNewTrusted
+              );
+
+              const isFirstRunToday = Boolean(isExplicitNew || (fvHit && fvHit.isFirstRun && !hasHardRepeatSignal && !isOvernightRepeatWindow));
+              const isRepeat = !isExplicitNew && (hasHardRepeatSignal || (!isFirstRunToday && Boolean(ev.repeat || ev.r_flag)));
 
               return {
                 id: `skyev-${ev.eid || `${sid}-${ev.st}`}`,

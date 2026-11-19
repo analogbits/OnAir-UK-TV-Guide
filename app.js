@@ -551,6 +551,44 @@
     return diffDays >= 30;
   }
 
+  function getAirDateDiffDays(firstIso, activeIso) {
+    if (!firstIso || !activeIso || !/^\d{4}-\d{2}-\d{2}$/.test(firstIso) || !/^\d{4}-\d{2}-\d{2}$/.test(activeIso)) {
+      return null;
+    }
+    const diffMs = new Date(`${activeIso}T00:00:00Z`) - new Date(`${firstIso}T00:00:00Z`);
+    return Math.round(diffMs / 86400000);
+  }
+
+  function hasEarlierEpisodeAiringInMemory(prog, ch, dayOffset) {
+    if (!prog || !ch || !ch.sid) return false;
+    const seMatch = String(prog.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
+    const sNum = prog.seasonNumber || (seMatch ? Number(seMatch[1]) : null);
+    const eNum = prog.episodeNumber || (seMatch ? Number(seMatch[2]) : null);
+    if (!sNum || !eNum) return false;
+    const normTitle = normalizeEditorialTitle(prog.title || "");
+    if (!normTitle) return false;
+
+    for (let d = Math.max(-7, dayOffset - 7); d <= dayOffset; d++) {
+      const dayMap = liveEpgByDay.get(d);
+      const evs = dayMap && dayMap[ch.sid];
+      if (!Array.isArray(evs) || !evs.length) continue;
+      for (let i = 0; i < evs.length; i++) {
+        const other = evs[i];
+        if (!other || other.id === prog.id) continue;
+        if (d === dayOffset && (other.startMin || 0) >= (prog.startMin || 0)) continue;
+        const oSe = String(other.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
+        const oS = other.seasonNumber || (oSe ? Number(oSe[1]) : null);
+        const oE = other.episodeNumber || (oSe ? Number(oSe[2]) : null);
+        if (Number(oS) === Number(sNum) && Number(oE) === Number(eNum)) {
+          if (normalizeEditorialTitle(other.title || "") === normTitle) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   function getBroadcastStatus(prog, ch = null, dayOffset = null) {
     if (!prog) return "";
     const title = String(prog.title || "").trim();
@@ -561,32 +599,54 @@
       ? state.timeMachineDate
       : getSkyDateStrForOffset(resolvedOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 
-    // 1. Explicit New markers in title, synopsis, or TVMaze/Sky flags
-    if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
+    const isPlusOne = /\+1\b/i.test(chName);
+    const isArchiveCh = Boolean(chName && REPEAT_ARCHIVE_CH_RE.test(chName));
+    const isOvernightSlot = typeof prog.startMin === "number" && prog.startMin < 345 && prog.genre !== "News" && prog.genre !== "Sport";
+    const hasTitleNewPrefix = /^New:\s*/i.test(title);
+    const hasSynopsisNewTag = /\b(brand[- ]new|new series|series premiere)\b/i.test(desc);
+    const hasBroadcasterRepeatTag =
+      /\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bSigned repeat\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b/i.test(desc) ||
+      /\(R\)/i.test(title);
+    const hasHistoricAirDate = prog.firstShown ? isHistoricRepeatAirDate(prog.firstShown, activeIso) : false;
+    const verifiedAirDiff = prog.isVerifiedRepeat && prog.firstShown ? getAirDateDiffDays(prog.firstShown, activeIso) : null;
+    const hasEarlierAiring = !state.timeMachineDate && hasEarlierEpisodeAiringInMemory(prog, ch, resolvedOffset);
+
+    // 1. Authoritative Repeat checks ALWAYS beat Sky's loose ev.new flag
+    if (
+      hasBroadcasterRepeatTag ||
+      (verifiedAirDiff !== null && verifiedAirDiff >= 1) ||
+      hasHistoricAirDate ||
+      hasEarlierAiring ||
+      isPlusOne
+    ) {
+      return isPlusOne && prog.genre === "Film" ? "" : "Repeat";
+    }
+
+    // 2. Explicit New markers (excluding overnight repeat slots & archive channels unless title literally says "New:")
+    if (hasTitleNewPrefix) {
       return "New";
     }
-    if (prog.isNew && !prog.isRepeat) {
+    if (hasSynopsisNewTag && !isOvernightSlot && !isArchiveCh) {
+      return "New";
+    }
+    if (prog.isNew && !prog.isRepeat && !isOvernightSlot && !isArchiveCh && prog.genre !== "Film") {
       return "New";
     }
 
-    // 2. Authoritative First-Run flag from Freeview UK / current premiere run
-    if (prog.isFirstRunToday) {
+    // 3. Authoritative First-Run flag from Freeview UK / current premiere run (not overnight repeat slot)
+    if (prog.isFirstRunToday && !isOvernightSlot) {
       return "";
     }
 
-    // 3. Repeat flag: explicit broadcaster tag, or verified historic air date (>= 30 days ago or previous calendar year)
-    const hasBroadcasterRepeatTag = /\(R\)\s*$|\b\(R\)|\bRepeat\b|\bAnother chance to see\b|\bOriginally shown in (19\d\d|20[0-2][0-5])\b/i.test(desc) || /\(R\)/i.test(title);
-    const hasHistoricAirDate = prog.firstShown ? isHistoricRepeatAirDate(prog.firstShown, activeIso) : false;
-
-    if (prog.isRepeat || hasHistoricAirDate || hasBroadcasterRepeatTag) {
-      // Safety guard: if firstShown is within 30 days, or show is tagged Series 1 with episode fraction (e.g. 1/4, 2/4) in current year, do not mark as Repeat
-      if (prog.firstShown && !hasHistoricAirDate) {
+    // 4. Repeat flag from EPG metadata
+    if (prog.isRepeat) {
+      if (prog.firstShown && !hasHistoricAirDate && !prog.isVerifiedRepeat) {
         return "";
       }
       return "Repeat";
     }
 
-    // 4. Live news, weather, live sport & live daytime magazine shows are never repeats
+    // 5. Live news, weather, live sport & live daytime magazine shows are never repeats
     if (
       LIVE_FIRST_RUN_RE.test(title) ||
       prog.genre === "News" ||
@@ -595,8 +655,13 @@
       return "";
     }
 
-    // 5. Repeat/Archive channels (ITV3, Dave, Gold, More4, E4, Sky Mix, Sky Comedy, etc.) when not explicitly New:
-    if (chName && REPEAT_ARCHIVE_CH_RE.test(chName) && prog.genre !== "Film") {
+    // 6. Overnight repeat slot (00:00–05:44) for series with Series/Ep on main channels (e.g. 00:10 Graham Norton repeat)
+    if (isOvernightSlot && prog.genre !== "Film" && (prog.seasonNumber || /Series\s*\d+/i.test(prog.ep || ""))) {
+      return "Repeat";
+    }
+
+    // 7. Repeat/Archive channels (ITV3, Dave, Gold, More4, E4, Sky Mix, Sky Comedy, etc.) when not explicitly New:
+    if (isArchiveCh && prog.genre !== "Film") {
       return "Repeat";
     }
 
@@ -3555,7 +3620,7 @@
           <div class="modal-meta-line">
             <span><strong>${escapeHtml(dayContextLabel)} &middot; ${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
             ${prog.ep ? `<span>&bull; ${escapeHtml(prog.ep)}</span>` : ""}
-            <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown && isHistoricRepeatAirDate(prog.firstShown, activeIsoDate) ? ` · First shown ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
+            <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown && (prog.isVerifiedRepeat || isHistoricRepeatAirDate(prog.firstShown, activeIsoDate)) ? ` · First aired ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
             ${prog.stars ? `<span class="star-rating">&bull; ${formatStars(prog.stars)}</span>` : ""}
           </div>
         </div>
@@ -3601,45 +3666,81 @@
     const seMatch = String(prog.ep || "").match(/Series\s*(\d+),\s*Ep\s*(\d+)/i);
     const sNum = prog.seasonNumber || (seMatch ? Number(seMatch[1]) : null);
     const eNum = prog.episodeNumber || (seMatch ? Number(seMatch[2]) : null);
-    if (sNum && eNum && !prog.firstShown) {
+    if (sNum && eNum && !prog.isVerifiedRepeat) {
       const cleanQ = String(prog.title || "").replace(/^(?:New|Live|Film):\s*/i, "").trim();
-      fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanQ)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((sh) => (sh && sh.id ? fetch(`https://api.tvmaze.com/shows/${sh.id}/episodebynumber?season=${sNum}&number=${eNum}`) : null))
-        .then((r) => (r && r.ok ? r.json() : null))
-        .then((epData) => {
-          if (!epData || !epData.airdate) return;
-          const modalTitleEl = document.getElementById("modalTitle");
-          if (!modalTitleEl || (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) !== prog.title) return;
-          if (isHistoricRepeatAirDate(epData.airdate, activeIsoDate)) {
-            prog.firstShown = epData.airdate;
-            prog.isRepeat = true;
-            const stEl = document.getElementById("modalBroadcastStatus");
-            if (stEl) {
-              stEl.innerHTML = `&bull; <strong>🔁 Repeat (R) · First aired ${escapeHtml(formatShortAirDate(epData.airdate))}</strong>`;
-            }
-            const kbEl = document.getElementById("modalKickerStatusBadge");
-            if (kbEl && !prog.isNew) {
-              kbEl.innerHTML = `<span class="mini-tag repeat-tag" title="First aired ${escapeHtml(epData.airdate)}">REPEAT (R)</span>`;
-            }
-          } else {
-            // Airdate is recent (<30 days, current series broadcast run or iPlayer drop) -> NOT a repeat!
-            prog.isRepeat = false;
-            prog.isFirstRunToday = true;
-            prog.firstShown = null;
-            const stEl = document.getElementById("modalBroadcastStatus");
-            if (stEl) {
-              stEl.innerHTML = `&bull; <strong>✨ Brand New</strong>`;
-            }
-            const kbEl = document.getElementById("modalKickerStatusBadge");
-            if (kbEl) {
-              kbEl.innerHTML = `<span class="mini-tag live">NEW</span>`;
-            }
-            const titleRepMark = document.getElementById("modalTitleRepeatMark");
-            if (titleRepMark) titleRepMark.remove();
+      const tvmEpCacheKey = `${cleanQ.toLowerCase()}|s${sNum}e${eNum}`;
+      window._onairTvmEpCache = window._onairTvmEpCache || new Map();
+
+      const applyTvmEpAirdate = (epAirdate) => {
+        if (!epAirdate) return;
+        const modalTitleEl = document.getElementById("modalTitle");
+        if (!modalTitleEl || (modalTitleEl.dataset.rawTitle || modalTitleEl.textContent) !== prog.title) return;
+
+        const diffDays = getAirDateDiffDays(epAirdate, activeIsoDate);
+        if (diffDays === null) return;
+
+        if (diffDays >= 1) {
+          // Verified Repeat: this exact episode first aired on an earlier date (e.g. last week or prior year)
+          prog.firstShown = epAirdate;
+          prog.isRepeat = true;
+          prog.isVerifiedRepeat = true;
+          prog.isNew = false;
+          prog.isFirstRunToday = false;
+          const stEl = document.getElementById("modalBroadcastStatus");
+          if (stEl) {
+            stEl.innerHTML = `&bull; <strong>🔁 Repeat (R) · First aired ${escapeHtml(formatShortAirDate(epAirdate))}</strong>`;
           }
-        })
-        .catch(() => {});
+          const kbEl = document.getElementById("modalKickerStatusBadge");
+          if (kbEl) {
+            kbEl.innerHTML = `<span class="mini-tag repeat-tag" title="First aired ${escapeHtml(epAirdate)}">REPEAT (R)</span>`;
+          }
+          if (!document.getElementById("modalTitleRepeatMark") && !/\(R\)/i.test(prog.title || "")) {
+            modalTitleEl.insertAdjacentHTML("beforeend", ` <span id="modalTitleRepeatMark" class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>`);
+          }
+          // Also live-update the matching EPG tile on the grid so any false NEW badge clears immediately
+          const gridBtn = el.epgGrid && el.epgGrid.querySelector(`.epg-prog[data-prog-id="${CSS.escape(prog.id)}"]`);
+          if (gridBtn) {
+            const tag = gridBtn.querySelector(".mini-tag.live");
+            if (tag && tag.textContent === "NEW") {
+              tag.className = "mini-tag repeat-tag";
+              tag.textContent = "R";
+              tag.title = `Repeat (First aired ${epAirdate})`;
+            }
+          }
+        } else if (diffDays <= 0 && !/\+1\b/i.test(ch.name || "")) {
+          // Exact airdate matches TODAY (or future premiere) -> genuinely Brand New!
+          prog.isRepeat = false;
+          prog.isVerifiedRepeat = false;
+          prog.isFirstRunToday = true;
+          prog.isNew = true;
+          prog.firstShown = null;
+          const stEl = document.getElementById("modalBroadcastStatus");
+          if (stEl) {
+            stEl.innerHTML = `&bull; <strong>✨ Brand New</strong>`;
+          }
+          const kbEl = document.getElementById("modalKickerStatusBadge");
+          if (kbEl) {
+            kbEl.innerHTML = `<span class="mini-tag live">NEW</span>`;
+          }
+          const titleRepMark = document.getElementById("modalTitleRepeatMark");
+          if (titleRepMark) titleRepMark.remove();
+        }
+      };
+
+      if (window._onairTvmEpCache.has(tvmEpCacheKey)) {
+        applyTvmEpAirdate(window._onairTvmEpCache.get(tvmEpCacheKey));
+      } else {
+        fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanQ)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((sh) => (sh && sh.id ? fetch(`https://api.tvmaze.com/shows/${sh.id}/episodebynumber?season=${sNum}&number=${eNum}`) : null))
+          .then((r) => (r && r.ok ? r.json() : null))
+          .then((epData) => {
+            const airdate = (epData && epData.airdate) || null;
+            window._onairTvmEpCache.set(tvmEpCacheKey, airdate);
+            if (airdate) applyTvmEpAirdate(airdate);
+          })
+          .catch(() => {});
+      }
     }
 
     document.getElementById("modalWatchlistBtn").onclick = () => {
