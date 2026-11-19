@@ -1337,6 +1337,7 @@
     if (el.epgGrid) {
       el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
     }
+    updateMobileFiltersSummary();
 
     const dayWidth = 1440 * PIXELS_PER_MIN;
     const trackWidth = totalDays * dayWidth;
@@ -1579,11 +1580,32 @@
     }
   }
 
-  function scrollToDayOffset(targetDay, hourOffset = 0) {
+  function updateMobileFiltersSummary() {
+    const sumEl = document.getElementById("mobileFiltersSummary");
+    if (!sumEl) return;
+    const platObj = (typeof PLATFORMS !== "undefined" ? PLATFORMS : []).find((p) => p.id === state.platform);
+    const platLabel = platObj ? platObj.name : state.platform;
+    const regObj = typeof ONAIR_LIVE !== "undefined" && ONAIR_LIVE.getRegion ? ONAIR_LIVE.getRegion() : null;
+    const regLabel = regObj ? regObj.short || regObj.name : "UK";
+    const catLabel = state.epgCategory || "All";
+    const filterNote = state.epgChannelQuery ? ` · "${state.epgChannelQuery.trim()}"` : "";
+    sumEl.textContent = `${platLabel} • ${regLabel} • ${catLabel}${filterNote}`;
+  }
+
+  function scrollToDayOffset(targetDay, hourOffset = null) {
     epgContinuous.programmaticScrollUntil = Date.now() + 850;
     if (state.timeMachineDate) {
       exitTimeMachine();
     }
+
+    // Preserve the exact time-of-day currently visible in the EPG unless an explicit hourOffset was passed
+    const prevStartDay = epgContinuous.startDay;
+    let preservedMinInDay = Math.max(0, getNowMinutes() - 45);
+    if (el.epgScrollContainer && el.epgScrollContainer.scrollLeft > 0 && epgContinuous.initialScrolled) {
+      const currentTotalMin = el.epgScrollContainer.scrollLeft / PIXELS_PER_MIN;
+      preservedMinInDay = ((currentTotalMin % 1440) + 1440) % 1440;
+    }
+
     if (targetDay > epgContinuous.endDay) {
       epgContinuous.endDay = Math.min(epgContinuous.maxDay, targetDay + 1);
     }
@@ -1591,13 +1613,22 @@
       epgContinuous.startDay = Math.max(-7, targetDay);
     }
 
+    const prependedDays = Math.max(0, prevStartDay - epgContinuous.startDay);
+    const prevScroll = el.epgScrollContainer ? el.epgScrollContainer.scrollLeft : 0;
+
     state.dayOffset = targetDay;
     renderDateStrip();
     renderEPG(true);
+    updateEpgCornerDayPill(targetDay);
+
+    if (prependedDays > 0 && el.epgScrollContainer) {
+      el.epgScrollContainer.scrollLeft = prevScroll + (prependedDays * 1440 * PIXELS_PER_MIN);
+    }
 
     requestAnimationFrame(() => {
       const dayIndex = targetDay - epgContinuous.startDay;
-      const targetMin = (dayIndex * 1440) + (targetDay === 0 && hourOffset === 0 ? Math.max(0, getNowMinutes() - 45) : hourOffset * 60);
+      const minInDay = hourOffset !== null && hourOffset !== undefined ? hourOffset * 60 : preservedMinInDay;
+      const targetMin = (dayIndex * 1440) + minInDay;
       el.epgScrollContainer.scrollTo({
         left: targetMin * PIXELS_PER_MIN,
         behavior: "smooth"
@@ -4314,9 +4345,9 @@
         } else if (e.key === "p" || e.key === "P") {
           scrollEpgToHour(20);
         } else if (e.key === "[" && state.dayOffset > -7) {
-          scrollToDayOffset(state.dayOffset - 1, 9);
+          scrollToDayOffset(state.dayOffset - 1);
         } else if (e.key === "]" && state.dayOffset < 6) {
-          scrollToDayOffset(state.dayOffset + 1, 9);
+          scrollToDayOffset(state.dayOffset + 1);
         } else if (e.key === "ArrowRight" && el.epgScrollContainer) {
           e.preventDefault();
           el.epgScrollContainer.scrollBy({ left: 120 * PIXELS_PER_MIN, behavior: "smooth" });
@@ -4326,6 +4357,15 @@
         }
       }
     });
+
+    const mobileFiltersToggleBtn = document.getElementById("mobileFiltersToggleBtn");
+    const epgControlsBar = document.getElementById("epgControlsBar");
+    if (mobileFiltersToggleBtn && epgControlsBar) {
+      mobileFiltersToggleBtn.addEventListener("click", () => {
+        const expanded = epgControlsBar.classList.toggle("is-mobile-expanded");
+        mobileFiltersToggleBtn.setAttribute("aria-expanded", String(expanded));
+      });
+    }
 
     const chFilterInput = document.getElementById("epgChannelFilterInput");
     if (chFilterInput) {
