@@ -2393,11 +2393,31 @@ const ONAIR_LIVE = (() => {
         extractRow(re).slice(0, 2).forEach((n) => crew.push(`${n} (${role})`));
       });
 
+      const wikiImage = sumRes && sumRes.thumbnail && sumRes.thumbnail.source ? sumRes.thumbnail.source : null;
       if (!cast.length && !crew.length && !wikiSummary) return null;
-      return { castList: cast.slice(0, 6), crewList: crew.slice(0, 5), summary: wikiSummary };
+      return { castList: cast.slice(0, 6), crewList: crew.slice(0, 5), summary: wikiSummary, image: wikiImage };
     } catch {
       return null;
     }
+  }
+
+  function isValidTvmazeMatch(queryTitle, data) {
+    if (!data || !data.name) return false;
+    const norm = (s) =>
+      String(s || "")
+        .toLowerCase()
+        .replace(/^the\s+/i, "")
+        .replace(/[^a-z0-9]/g, "");
+    const nq = norm(queryTitle);
+    const nn = norm(data.name);
+    if (!nq || !nn) return false;
+    // Reject loose fuzzy hits like "Blockers" -> "Blocker Gundan IV Machine Blaster"
+    const exactOrClose = nq === nn || (nn.startsWith(nq) && nn.length - nq.length <= 5) || (nq.startsWith(nn) && nq.length - nn.length <= 5);
+    if (!exactOrClose) return false;
+    // Reject junk anime placeholder summaries like "More : https://anidb.net/anime/..."
+    const sumPlain = String(data.summary || "").replace(/<[^>]+>/g, "").trim();
+    if (/^more\s*:\s*https?:\/\//i.test(sumPlain) || /anidb\.net/i.test(sumPlain)) return false;
+    return true;
   }
 
   async function resolveDirectShowLink(rawTitle) {
@@ -2415,7 +2435,12 @@ const ONAIR_LIVE = (() => {
 
     // Check persistent localStorage Show Vault first (30-day reuse, zero API calls)
     const vault = loadVault();
-    const stored = vault[key];
+    let stored = vault[key];
+    // Auto-heal any previously mis-matched TVMaze anime/junk vault entry (e.g. "More : https://anidb.net/...")
+    if (stored && stored.summary && (/^more\s*:\s*https?:\/\//i.test(stored.summary) || /anidb\.net/i.test(stored.summary))) {
+      stored = null;
+      delete vault[key];
+    }
     if (stored && stored.savedAt && Date.now() - stored.savedAt < VAULT_TTL_MS) {
       if (stored.notFound && stored.wikiChecked) {
         showLinkCache.set(key, null);
@@ -2444,6 +2469,7 @@ const ONAIR_LIVE = (() => {
       let crewList = stored && Array.isArray(stored.crewList) ? stored.crewList : [];
 
       const mapTvmazeEmbeds = (data) => {
+        if (!isValidTvmazeMatch(clean, data)) return;
         directUrl = normalizeDirectUrl(directUrl) || normalizeDirectUrl(data.officialSite || null);
         tvmazeUrl = tvmazeUrl || data.url || null;
         imdbId = imdbId || (data.externals && data.externals.imdb ? data.externals.imdb : null);
@@ -2506,12 +2532,13 @@ const ONAIR_LIVE = (() => {
       }
 
       // Tier 3: Wikipedia Infobox failover (works for movies, documentaries, panel shows & TV)
-      if (!castList.length || !crewList.length || !summary) {
+      if (!castList.length || !crewList.length || !summary || !image) {
         const wiki = await fetchWikipediaCastCrew(clean);
         if (wiki) {
           if (!castList.length && wiki.castList.length) castList = wiki.castList;
           if (!crewList.length && wiki.crewList.length) crewList = wiki.crewList;
           if (!summary && wiki.summary) summary = wiki.summary;
+          if (!image && wiki.image) image = wiki.image;
         }
       }
 
