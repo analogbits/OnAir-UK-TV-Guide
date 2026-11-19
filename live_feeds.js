@@ -646,6 +646,8 @@ const ONAIR_LIVE = (() => {
     }
   }
 
+  let idbPersistTimer = null;
+
   function saveCache(cache) {
     // Auto-prune past EPG schedule days older than 7 days ago so catch-up + upcoming stays compact
     const minSkyDate = getSkyDateString(-7);
@@ -660,7 +662,11 @@ const ONAIR_LIVE = (() => {
 
     memCache = cache;
     if (typeof indexedDB !== "undefined") {
-      persistCompressedIdb("epg_cache_24h", cache, "epgCompressedBytes");
+      if (idbPersistTimer) clearTimeout(idbPersistTimer);
+      idbPersistTimer = setTimeout(() => {
+        idbPersistTimer = null;
+        persistCompressedIdb("epg_cache_24h", memCache || cache, "epgCompressedBytes");
+      }, 350);
       return;
     }
 

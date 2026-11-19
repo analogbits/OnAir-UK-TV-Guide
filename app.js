@@ -236,8 +236,24 @@
     return [...extras, ...STREAMING_CATALOGUE];
   }
 
+  let _channelByIdCache = new Map();
+  let _channelByIdSource = null;
+  let _channelByIdCount = -1;
+
+  function getChannelById(channelId) {
+    if (_channelByIdSource !== liveChannels || _channelByIdCount !== liveChannels.length) {
+      _channelByIdCache = new Map();
+      for (let i = 0; i < liveChannels.length; i++) {
+        _channelByIdCache.set(liveChannels[i].id, liveChannels[i]);
+      }
+      _channelByIdSource = liveChannels;
+      _channelByIdCount = liveChannels.length;
+    }
+    return _channelByIdCache.get(channelId) || null;
+  }
+
   function getSchedule(channelId, dayOffset) {
-    const ch = liveChannels.find((c) => c.id === channelId);
+    const ch = getChannelById(channelId);
     if (!ch || !ch.sid) return [];
     if (state.timeMachineDate && timeMachineEpg) {
       return timeMachineEpg[ch.sid] || [];
@@ -309,9 +325,13 @@
   // Queue day fetches sequentially to prevent rate limits or 429 cooldowns from awk.epgsky.com
   const dayFetchQueue = [];
   let isProcessingDayQueue = false;
+  let latestQueuedChannels = null;
 
   async function enqueueDayScheduleFetch(channels, dayOffset) {
     if (state.timeMachineDate) return;
+    if (Array.isArray(channels) && channels.length) {
+      latestQueuedChannels = channels;
+    }
     if (!dayFetchQueue.includes(dayOffset)) {
       dayFetchQueue.push(dayOffset);
     }
@@ -319,6 +339,10 @@
     isProcessingDayQueue = true;
     try {
       while (dayFetchQueue.length > 0) {
+        if (state.timeMachineDate) {
+          dayFetchQueue.length = 0;
+          break;
+        }
         let targetDay;
         const activeIdx = dayFetchQueue.indexOf(state.dayOffset);
         if (activeIdx !== -1) {
@@ -326,7 +350,11 @@
         } else {
           targetDay = dayFetchQueue.shift();
         }
-        await ensureSchedulesForChannels(channels, targetDay);
+        const activeChannels =
+          state.view === "epg"
+            ? getFilteredChannels(state.epgCategory === "Favorites" ? "Favorites" : "All")
+            : (latestQueuedChannels || channels);
+        await ensureSchedulesForChannels(activeChannels, targetDay);
         await new Promise((r) => setTimeout(r, 80));
       }
     } finally {
@@ -523,12 +551,15 @@
     return diffDays >= 30;
   }
 
-  function getBroadcastStatus(prog, ch = null) {
+  function getBroadcastStatus(prog, ch = null, dayOffset = null) {
     if (!prog) return "";
     const title = String(prog.title || "").trim();
     const desc = String(prog.desc || "").trim();
     const chName = ch && ch.name ? String(ch.name) : "";
-    const activeIso = getActiveIsoDate();
+    const resolvedOffset = dayOffset !== null && dayOffset !== undefined ? dayOffset : state.dayOffset;
+    const activeIso = state.timeMachineDate
+      ? state.timeMachineDate
+      : getSkyDateStrForOffset(resolvedOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 
     // 1. Explicit New markers in title, synopsis, or TVMaze/Sky flags
     if (/^New:\s*/i.test(title) || /\b(brand[- ]new|new series|series premiere)\b/i.test(desc)) {
@@ -757,8 +788,9 @@
   }
 
   function formatTime(minutesFromMidnight) {
-    const h = Math.floor(minutesFromMidnight / 60) % 24;
-    const m = minutesFromMidnight % 60;
+    const total = Math.max(0, Math.round(Number(minutesFromMidnight) || 0));
+    const h = Math.floor(total / 60) % 24;
+    const m = total % 60;
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   }
 
@@ -768,8 +800,9 @@
   }
 
   function formatStars(count) {
-    if (!count) return "";
-    return "★".repeat(count) + "☆".repeat(5 - count);
+    const c = Math.max(0, Math.min(5, Math.round(Number(count) || 0)));
+    if (!c) return "";
+    return "★".repeat(c) + "☆".repeat(5 - c);
   }
 
   let toastTimer = null;
@@ -1179,7 +1212,9 @@
         return bHas - aHas;
       });
     }
+    const prevPpm = epgContinuous.lastPixelsPerMin || PIXELS_PER_MIN;
     PIXELS_PER_MIN = Number(state.epgZoom || 4);
+    epgContinuous.lastPixelsPerMin = PIXELS_PER_MIN;
     document.body.classList.toggle("hover-reveal-enabled", Boolean(state.hoverRevealNames));
     if (el.epgGrid) {
       el.epgGrid.classList.toggle("is-compact", state.epgDensity === "compact");
@@ -1251,7 +1286,7 @@
                   const starHtml = starInfo
                     ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>`
                     : "";
-                  const bStatus = getBroadcastStatus(p, ch);
+                  const bStatus = getBroadcastStatus(p, ch, d);
                   const isRep = bStatus === "Repeat";
                   const rSuffix = isRep && !/\(R\)/i.test(p.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : "";
                   const hoverTitle = `${starInfo ? `★ ${starInfo.label} • ` : ""}${p.title}${isRep && !/\(R\)/i.test(p.title || "") ? " (R)" : bStatus === "New" ? " (NEW)" : ""} (${formatTime(p.startMin)}–${formatTime(p.endMin)} • ${p.genre})`;
@@ -1260,20 +1295,20 @@
                     <button
                       class="epg-prog ${isLive ? "is-live" : ""} ${isPast ? "is-past" : ""} ${starInfo ? "is-rt-pick" : ""}"
                       style="left:${left}px; width:${width}px; --prog-w:${width}px;"
-                      data-genre="${p.genre}"
-                      data-prog-id="${p.id}"
-                      data-channel-id="${ch.id}"
+                      data-genre="${escapeHtml(p.genre)}"
+                      data-prog-id="${escapeHtml(p.id)}"
+                      data-channel-id="${escapeHtml(ch.id)}"
                       data-prog-day="${d}"
                       title="${escapeHtml(hoverTitle)}"
                       type="button"
                     >
                       <div class="prog-top-row">
-                        <span class="prog-title">${starHtml}${p.title}${rSuffix}</span>
+                        <span class="prog-title">${starHtml}${escapeHtml(p.title)}${rSuffix}</span>
                         ${isLive ? `<span class="mini-tag live">LIVE</span>` : bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat broadcast">R</span>` : ""}
                       </div>
                       <div class="prog-bottom-row">
                         <span class="prog-time">${formatTime(p.startMin)}–${formatTime(p.endMin)}</span>
-                        <span>&bull; ${p.genre}</span>
+                        <span>&bull; ${escapeHtml(p.genre)}</span>
                       </div>
                     </button>
                   `;
@@ -1286,14 +1321,14 @@
             <div class="epg-row">
               <div class="epg-channel-cell">
                 <span class="channel-num">${chNum}</span>
-                <div class="channel-badge" style="background:${ch.color}">${ch.short}</div>
+                <div class="channel-badge" style="background:${ch.color}">${escapeHtml(ch.short)}</div>
                 <div class="channel-meta">
-                  <div class="channel-name" title="${ch.name}">${ch.name}</div>
-                  <div class="channel-hd">${ch.hd ? "HD" : "SD"} &bull; ${ch.catchup}</div>
+                  <div class="channel-name" title="${escapeHtml(ch.name)}">${escapeHtml(ch.name)}</div>
+                  <div class="channel-hd">${ch.hd ? "HD" : "SD"} &bull; ${escapeHtml(ch.catchup)}</div>
                 </div>
                 <button
                   class="fav-star-btn ${isFav ? "is-fav" : ""}"
-                  data-fav-channel="${ch.id}"
+                  data-fav-channel="${escapeHtml(ch.id)}"
                   title="${isFav ? "Remove from Favorites" : "Add to Favorites"}"
                   type="button"
                 >&#9733;</button>
@@ -1328,10 +1363,15 @@
     }
 
     const prevScrollLeft = el.epgScrollContainer ? el.epgScrollContainer.scrollLeft : null;
+    const cornerDayClass = state.timeMachineDate ? "is-past" : state.dayOffset === 0 ? "is-today" : state.dayOffset < 0 ? "is-past" : "is-future";
+    const cornerDayLabel = state.timeMachineDate ? state.timeMachineDate : formatDayShort(state.dayOffset);
 
     el.epgGrid.innerHTML = `
       <div class="epg-time-header">
-        <div class="epg-corner-cell">Channel</div>
+        <div class="epg-corner-cell">
+          <span>Channel</span>
+          <span id="epgCornerDay" class="epg-corner-day ${cornerDayClass}">${escapeHtml(cornerDayLabel)}</span>
+        </div>
         <div class="epg-time-slots" style="width:${trackWidth}px;">${ticksHtml}</div>
       </div>
       ${rowsHtml}
@@ -1340,11 +1380,20 @@
     `;
 
     if (prevScrollLeft !== null && prevScrollLeft > 0) {
-      el.epgScrollContainer.scrollLeft = prevScrollLeft;
+      const scaledScroll = prevPpm !== PIXELS_PER_MIN ? Math.round(prevScrollLeft * (PIXELS_PER_MIN / prevPpm)) : prevScrollLeft;
+      el.epgScrollContainer.scrollLeft = scaledScroll;
     } else if (!epgContinuous.initialScrolled) {
       epgContinuous.initialScrolled = true;
       requestAnimationFrame(() => scrollEpgToHour("now"));
     }
+  }
+
+  function updateEpgCornerDayPill(dayOffset) {
+    const pill = document.getElementById("epgCornerDay");
+    if (!pill) return;
+    pill.textContent = state.timeMachineDate ? state.timeMachineDate : formatDayShort(dayOffset);
+    pill.classList.remove("is-today", "is-past", "is-future");
+    pill.classList.add(state.timeMachineDate ? "is-past" : dayOffset === 0 ? "is-today" : dayOffset < 0 ? "is-past" : "is-future");
   }
 
   function scrollEpgToHour(hourVal) {
@@ -1364,19 +1413,36 @@
     if (hourVal === "now") {
       targetDay = 0;
       targetMinInDay = Math.max(0, getNowMinutes() - 45);
+      if (state.dayOffset !== 0) {
+        state.dayOffset = 0;
+        renderDateStrip();
+      }
+      updateEpgCornerDayPill(0);
     } else {
       targetMinInDay = Math.max(0, Number(hourVal) * 60 - 45);
     }
 
-    if (targetDay < epgContinuous.startDay) epgContinuous.startDay = targetDay;
-    if (targetDay > epgContinuous.endDay) epgContinuous.endDay = targetDay;
+    let needsRender = false;
+    if (targetDay < epgContinuous.startDay) {
+      epgContinuous.startDay = targetDay;
+      needsRender = true;
+    }
+    if (targetDay > epgContinuous.endDay) {
+      epgContinuous.endDay = targetDay;
+      needsRender = true;
+    }
+    if (needsRender) {
+      renderEPG(true);
+    }
 
     const dayIndex = targetDay - epgContinuous.startDay;
     const totalTargetMin = (dayIndex * 1440) + targetMinInDay;
 
-    el.epgScrollContainer.scrollTo({
-      left: totalTargetMin * PIXELS_PER_MIN,
-      behavior: "smooth"
+    requestAnimationFrame(() => {
+      el.epgScrollContainer.scrollTo({
+        left: totalTargetMin * PIXELS_PER_MIN,
+        behavior: "smooth"
+      });
     });
   }
 
@@ -1424,6 +1490,7 @@
 
       if (activeDay !== state.dayOffset && activeDay >= -7 && activeDay <= 6) {
         state.dayOffset = activeDay;
+        updateEpgCornerDayPill(activeDay);
         el.dateStrip.querySelectorAll(".date-btn").forEach((btn) => {
           const bDay = Number(btn.dataset.day);
           btn.classList.toggle("is-active", bDay === activeDay);
@@ -1437,14 +1504,76 @@
         enqueueDayScheduleFetch(toFetch, activeDay);
       }
 
-      // Auto-extend timeline when scrolling near right edge
+      // Auto-extend timeline when scrolling near RIGHT edge (future days)
       if (scrollLeft + clientWidth >= scrollWidth - 2500 && epgContinuous.endDay < epgContinuous.maxDay && !epgContinuous.extending) {
         epgContinuous.extending = true;
         epgContinuous.endDay = Math.min(epgContinuous.maxDay, epgContinuous.endDay + 2);
         renderEPG(true);
         setTimeout(() => { epgContinuous.extending = false; }, 400);
       }
+
+      // Auto-extend timeline when scrolling near LEFT edge (past days down to -7)
+      if (scrollLeft < 1800 && epgContinuous.startDay > -7 && !epgContinuous.extending) {
+        epgContinuous.extending = true;
+        const prevStart = epgContinuous.startDay;
+        const newStart = Math.max(-7, prevStart - 2);
+        const addedDays = prevStart - newStart;
+        if (addedDays > 0) {
+          epgContinuous.startDay = newStart;
+          const addedPx = addedDays * 1440 * PIXELS_PER_MIN;
+          const currentPos = el.epgScrollContainer.scrollLeft;
+          renderEPG(true);
+          el.epgScrollContainer.scrollLeft = currentPos + addedPx;
+        }
+        setTimeout(() => { epgContinuous.extending = false; }, 400);
+      }
     }, { passive: true });
+
+    // Desktop click-and-drag horizontal panning (ignored on touch devices, 6px threshold preserves normal clicks)
+    const isFinePointer = window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    if (isFinePointer) {
+      el.epgScrollContainer.classList.add("is-pannable");
+      let isPointerDown = false;
+      let hasDragged = false;
+      let startX = 0;
+      let startScrollLeft = 0;
+
+      el.epgScrollContainer.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest(".fav-star-btn, .epg-channel-cell, input, select")) return;
+        isPointerDown = true;
+        hasDragged = false;
+        startX = e.clientX;
+        startScrollLeft = el.epgScrollContainer.scrollLeft;
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!isPointerDown) return;
+        const dx = e.clientX - startX;
+        if (!hasDragged && Math.abs(dx) > 6) {
+          hasDragged = true;
+          el.epgScrollContainer.classList.add("is-dragging");
+        }
+        if (hasDragged) {
+          el.epgScrollContainer.scrollLeft = startScrollLeft - dx;
+        }
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!isPointerDown) return;
+        isPointerDown = false;
+        if (hasDragged) {
+          el.epgScrollContainer.classList.remove("is-dragging");
+          // Suppress the synthetic click event fired right after dragging
+          const suppressClick = (ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+          };
+          el.epgScrollContainer.addEventListener("click", suppressClick, { capture: true, once: true });
+          setTimeout(() => el.epgScrollContainer.removeEventListener("click", suppressClick, { capture: true }), 50);
+        }
+      });
+    }
   }
 
   // ========================================================================
@@ -1488,34 +1617,34 @@
         const current = nowIdx >= 0 ? progs[nowIdx] : progs[0];
         const next = nowIdx >= 0 && progs[nowIdx + 1] ? progs[nowIdx + 1] : null;
         const pct = current
-          ? Math.min(100, Math.max(5, Math.round(((nowMin - current.startMin) / (current.endMin - current.startMin)) * 100)))
+          ? Math.min(100, Math.max(5, Math.round(((nowMin - current.startMin) / Math.max(1, current.endMin - current.startMin)) * 100)))
           : 0;
 
         const currentStar = current ? getEditorialStarInfo(current, ch) : null;
         const nextStar = next ? getEditorialStarInfo(next, ch) : null;
-        const currentStatus = current ? getBroadcastStatus(current, ch) : "";
-        const nextStatus = next ? getBroadcastStatus(next, ch) : "";
+        const currentStatus = current ? getBroadcastStatus(current, ch, 0) : "";
+        const nextStatus = next ? getBroadcastStatus(next, ch, 0) : "";
 
         return `
           <article class="nn-card">
             <div class="nn-card-head">
               <span class="channel-num">${ch.numbers[state.platform]}</span>
-              <div class="channel-badge" style="background:${ch.color}">${ch.short}</div>
+              <div class="channel-badge" style="background:${ch.color}">${escapeHtml(ch.short)}</div>
               <div class="channel-meta">
-                <div class="channel-name">${ch.name}</div>
-                <div class="channel-hd">${ch.category} &bull; ${ch.catchup}</div>
+                <div class="channel-name">${escapeHtml(ch.name)}</div>
+                <div class="channel-hd">${escapeHtml(ch.category)} &bull; ${escapeHtml(ch.catchup)}</div>
               </div>
             </div>
 
             ${
               current
-                ? `<div class="nn-slot is-now" data-prog-id="${current.id}" data-channel-id="${ch.id}">
+                ? `<div class="nn-slot is-now" data-prog-id="${escapeHtml(current.id)}" data-channel-id="${escapeHtml(ch.id)}">
                     <div class="nn-slot-label">
                       <span>On Now ${currentStar ? `&bull; <span style="color:#f59e0b; font-weight:700;" title="${escapeHtml(currentStar.label)}">&#9733; ${escapeHtml(currentStar.label)}</span>` : ""} ${getLiveStreamUrl(ch) ? `&bull; <a href="${getLiveStreamUrl(ch)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:#dc2626; font-weight:700; text-decoration:none;">&#9654; Watch Live &nearr;</a>` : ""}</span>
                       <span>${formatTime(current.startMin)} – ${formatTime(current.endMin)}</span>
                     </div>
-                    <div class="nn-slot-title">${currentStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(currentStar.label)}">&#9733;</span>` : ""}${current.title}${currentStatus === "Repeat" && !/\(R\)/i.test(current.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : currentStatus === "New" ? ` <span class="mini-tag live" style="margin-left:4px;">NEW</span>` : ""}</div>
-                    <div class="prog-bottom-row">${current.ep} &bull; ${current.genre}</div>
+                    <div class="nn-slot-title">${currentStar ? `<span class="rt-pick-star" title="&#9733; ${escapeHtml(currentStar.label)}">&#9733;</span>` : ""}${escapeHtml(current.title)}${currentStatus === "Repeat" && !/\(R\)/i.test(current.title || "") ? ` <span class="repeat-inline-mark" title="Repeat broadcast">(R)</span>` : currentStatus === "New" ? ` <span class="mini-tag live" style="margin-left:4px;">NEW</span>` : ""}</div>
+                    <div class="prog-bottom-row">${escapeHtml(current.ep || "")} &bull; ${escapeHtml(current.genre)}</div>
                     <div class="nn-progress-bar"><div class="nn-progress-fill" style="width:${pct}%"></div></div>
                   </div>`
                 : ""
@@ -3319,9 +3448,16 @@
   // ========================================================================
   // Detail Modal
   // ========================================================================
-  function findProgrammeById(progId, channelId) {
-    const ch = liveChannels.find((c) => c.id === channelId);
+  function findProgrammeById(progId, channelId, preferredDayOffset = null) {
+    const ch = getChannelById(channelId);
     if (!ch) return null;
+    if (preferredDayOffset !== null && preferredDayOffset !== undefined) {
+      const prefProgs = getSchedule(channelId, preferredDayOffset);
+      if (Array.isArray(prefProgs)) {
+        const hit = prefProgs.find((p) => p.id === progId);
+        if (hit) return hit;
+      }
+    }
     const currentProgs = getSchedule(channelId, state.dayOffset);
     if (currentProgs) {
       const hit = currentProgs.find((p) => p.id === progId);
@@ -3364,12 +3500,13 @@
   }
 
   function openProgrammeModal(progId, channelId, progDayOffset) {
-    const ch = liveChannels.find((c) => c.id === channelId);
-    const prog = findProgrammeById(progId, channelId);
+    const ch = getChannelById(channelId);
+    const prog = findProgrammeById(progId, channelId, progDayOffset);
     if (!ch || !prog) return;
 
     const resolvedDayOffset = progDayOffset !== undefined ? progDayOffset : state.dayOffset;
     const activeIsoDate = state.timeMachineDate || getSkyDateStrForOffset(resolvedDayOffset).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+    const dayContextLabel = state.timeMachineDate ? state.timeMachineDate : formatDayShort(resolvedDayOffset);
     const saved = isInWatchlist(prog.id);
     const hasRem = state.reminders.has(prog.id);
     const chNum = ch.numbers[state.platform];
@@ -3377,7 +3514,7 @@
     const isLive = resolvedDayOffset === 0 && nowMin >= prog.startMin && nowMin < prog.endMin;
     const liveUrl = isLive ? getLiveStreamUrl(ch) : null;
     const starInfo = getEditorialStarInfo(prog, ch);
-    const bStatus = getBroadcastStatus(prog, ch);
+    const bStatus = getBroadcastStatus(prog, ch, resolvedDayOffset);
     const isRep = bStatus === "Repeat";
     const displayDesc = prog.desc;
     const otherAirings = findOtherAiringsForProgramme(prog, ch.id);
@@ -3414,10 +3551,10 @@
             ${isLive ? `<span class="mini-tag live">LIVE NOW</span>` : prog.isLiveData ? `<span class="mini-tag catchup">LIVE EPG</span>` : ""}
             <span id="modalKickerStatusBadge">${bStatus === "New" ? `<span class="mini-tag live">NEW</span>` : isRep ? `<span class="mini-tag repeat-tag" title="Repeat showing">REPEAT (R)</span>` : ""}</span>
           </div>
-          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${prog.title}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span id="modalTitleRepeatMark" class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
+          <h2 id="modalTitle" class="modal-title" data-raw-title="${escapeHtml(prog.title)}">${starInfo ? `<span class="rt-pick-star" style="font-size:18px;" title="&#9733; ${escapeHtml(starInfo.label)}">&#9733;</span>` : ""}${escapeHtml(prog.title)}${isRep && !/\(R\)/i.test(prog.title || "") ? ` <span id="modalTitleRepeatMark" class="repeat-inline-mark" style="font-size:15px;" title="Repeat broadcast">(R)</span>` : ""}</h2>
           <div class="modal-meta-line">
-            <span><strong>${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
-            <span>&bull; ${prog.ep}</span>
+            <span><strong>${escapeHtml(dayContextLabel)} &middot; ${formatTime(prog.startMin)} – ${formatTime(prog.endMin)}</strong></span>
+            ${prog.ep ? `<span>&bull; ${escapeHtml(prog.ep)}</span>` : ""}
             <span id="modalBroadcastStatus">&bull; <strong>${bStatus === "New" ? "✨ Brand New" : isRep ? `🔁 Repeat (R)${prog.firstShown && isHistoricRepeatAirDate(prog.firstShown, activeIsoDate) ? ` · First shown ${formatShortAirDate(prog.firstShown)}` : ""}` : isLive ? "🔴 Live" : "Broadcast"}</strong></span>
             ${prog.stars ? `<span class="star-rating">&bull; ${formatStars(prog.stars)}</span>` : ""}
           </div>
@@ -3980,28 +4117,78 @@
       if (e.key === "Escape") {
         el.detailModal.classList.add("hidden");
         el.watchlistDrawer.classList.add("hidden");
+        const tmPop = document.getElementById("tmPopover");
+        if (tmPop) tmPop.classList.add("hidden");
+        const chatP = document.getElementById("chatPanel");
+        if (chatP) chatP.classList.add("hidden");
+        const dbgP = document.getElementById("debugPanel");
+        if (dbgP) dbgP.classList.add("hidden");
+        if (el.searchResultsSection && !el.searchResultsSection.classList.contains("hidden")) {
+          el.searchResultsSection.classList.add("hidden");
+        }
+        return;
       }
       const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
       if (tag === "input" || tag === "textarea" || tag === "select" || (e.target && e.target.isContentEditable)) return;
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "/") {
         e.preventDefault();
         el.globalSearch.focus();
-      } else if ((e.key === "n" || e.key === "N") && !e.metaKey && !e.ctrlKey && state.view === "epg") {
-        scrollEpgToHour("now");
+      } else if (state.view === "epg") {
+        if (e.key === "n" || e.key === "N") {
+          scrollEpgToHour("now");
+        } else if (e.key === "p" || e.key === "P") {
+          scrollEpgToHour(20);
+        } else if (e.key === "[" && state.dayOffset > -7) {
+          scrollToDayOffset(state.dayOffset - 1, 9);
+        } else if (e.key === "]" && state.dayOffset < 6) {
+          scrollToDayOffset(state.dayOffset + 1, 9);
+        } else if (e.key === "ArrowRight" && el.epgScrollContainer) {
+          e.preventDefault();
+          el.epgScrollContainer.scrollBy({ left: 120 * PIXELS_PER_MIN, behavior: "smooth" });
+        } else if (e.key === "ArrowLeft" && el.epgScrollContainer) {
+          e.preventDefault();
+          el.epgScrollContainer.scrollBy({ left: -120 * PIXELS_PER_MIN, behavior: "smooth" });
+        }
       }
     });
 
     const chFilterInput = document.getElementById("epgChannelFilterInput");
     if (chFilterInput) {
+      let chFilterTimer = null;
       chFilterInput.addEventListener("input", (e) => {
         state.epgChannelQuery = e.target.value || "";
-        renderEPG(false);
+        if (chFilterTimer) clearTimeout(chFilterTimer);
+        chFilterTimer = setTimeout(() => {
+          chFilterTimer = null;
+          renderEPG(false);
+        }, 110);
       });
     }
 
     window.addEventListener("onair:idb-hydrated", () => {
       if (state.view === "settings") renderSettings();
+      else if (state.view === "epg") renderEPG(false);
+      else if (state.view === "now-next") renderNowNext(false);
     });
+
+    // Live 60-second Now-Line & Clock updater (zero network load)
+    setInterval(() => {
+      if (document.hidden) return;
+      const nowMin = getNowMinutes();
+      if (state.view === "epg" && !state.timeMachineDate) {
+        const line = el.epgGrid && el.epgGrid.querySelector(".epg-now-line");
+        if (line && epgContinuous.startDay <= 0 && epgContinuous.endDay >= 0) {
+          const dayWidth = 1440 * PIXELS_PER_MIN;
+          const todayIndex = 0 - epgContinuous.startDay;
+          const nowOffsetPx = (todayIndex * dayWidth) + (nowMin * PIXELS_PER_MIN);
+          line.style.left = `calc(var(--epg-channel-col) + ${nowOffsetPx}px)`;
+        }
+      } else if (state.view === "now-next") {
+        renderNowNext(false);
+      }
+    }, 60 * 1000);
 
     // Theme Toggle (cycles: System -> Light -> Dark)
     el.themeToggleBtn.addEventListener("click", () => {
@@ -6315,14 +6502,17 @@
         </div>
       </div>
 
-      <div style="padding:12px 14px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-secondary); margin-bottom:16px; font-size:12px; color:var(--text-secondary);">
-        <strong style="color:var(--text-primary); display:block; margin-bottom:6px;">⌨️ Quick Keyboard Shortcuts (Desktop)</strong>
+      <div style="padding:12px 14px; border-radius:12px; border:1px solid var(--border-subtle); background:var(--bg-surface-alt); margin-bottom:16px; font-size:12px; color:var(--text-secondary);">
+        <strong style="color:var(--text-primary); display:block; margin-bottom:6px;">⌨️ Quick Keyboard Shortcuts &amp; Navigation (Desktop)</strong>
         <div style="display:flex; flex-wrap:wrap; gap:10px 18px;">
           <span><code>/</code> Focus Search</span>
           <span><code>N</code> Jump to Now</span>
           <span><code>P</code> Jump to Primetime (20:00)</span>
+          <span><code>&larr;</code> / <code>&rarr;</code> Pan 2 Hours</span>
+          <span><code>[</code> / <code>]</code> Previous / Next Day</span>
+          <span><code>Click &amp; Drag</code> Pan TV Grid</span>
           <span><code>?</code> Open Help Guide</span>
-          <span><code>Esc</code> Close Modals / Drawers</span>
+          <span><code>Esc</code> Close Overlays</span>
         </div>
       </div>
 
