@@ -259,10 +259,10 @@
     return _channelByIdCache.get(channelId) || null;
   }
 
-  function getSchedule(channelId, dayOffset) {
+  function getSchedule(channelId, dayOffset, ignoreTimeMachine = false) {
     const ch = getChannelById(channelId);
     if (!ch || !ch.sid) return [];
-    if (state.timeMachineDate && timeMachineEpg) {
+    if (!ignoreTimeMachine && state.timeMachineDate && timeMachineEpg) {
       return timeMachineEpg[ch.sid] || [];
     }
     const dayMap = liveEpgByDay.get(dayOffset);
@@ -3696,9 +3696,14 @@
     const ch = getChannelById(channelId);
     if (!ch) return null;
     if (preferredDayOffset !== null && preferredDayOffset !== undefined) {
-      const prefProgs = getSchedule(channelId, preferredDayOffset);
+      const prefProgs = getSchedule(channelId, preferredDayOffset, false);
       if (Array.isArray(prefProgs)) {
         const hit = prefProgs.find((p) => p.id === progId);
+        if (hit) return hit;
+      }
+      const livePrefProgs = getSchedule(channelId, preferredDayOffset, true);
+      if (Array.isArray(livePrefProgs)) {
+        const hit = livePrefProgs.find((p) => p.id === progId);
         if (hit) return hit;
       }
     }
@@ -3846,7 +3851,7 @@
 
     // Current On Now & Up Next snapshot
     const nowMin = getNowMinutes();
-    const todayProgs = getSchedule(ch.id, 0);
+    const todayProgs = getSchedule(ch.id, 0, true);
     let nowNextBannerHtml = "";
     if (Array.isArray(todayProgs) && todayProgs.length) {
       const nowIdx = todayProgs.findIndex((p) => nowMin >= p.startMin && nowMin < p.endMin);
@@ -3975,7 +3980,7 @@
     };
 
     const buildDaySectionHtml = (d) => {
-      const progs = getSchedule(ch.id, d);
+      const progs = getSchedule(ch.id, d, true);
       const heading = formatChannelViewerDayHeading(d);
       const badgeCls = d === 0 ? "is-today" : d < 0 ? "is-past" : "is-future";
       const fetchKey = `${ch.sid}|${d}`;
@@ -4094,7 +4099,7 @@
       days.forEach((d) => {
         const key = `${ch.sid}|${d}`;
         if (_channelDayFetched.has(key)) return;
-        const existing = getSchedule(ch.id, d);
+        const existing = getSchedule(ch.id, d, true);
         if (Array.isArray(existing) && existing.length > 0) {
           _channelDayFetched.add(key);
           return;
