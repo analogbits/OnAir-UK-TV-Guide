@@ -1120,13 +1120,35 @@
 
   function progMatchesCategory(prog, category, chName = "") {
     if (!prog) return false;
+    const text = `${prog.title || ""} ${prog.desc || ""} ${prog.genre || ""} ${chName || ""}`;
     if (category === "Seasonal") {
       const season = getActiveSeason();
-      return season.regex.test(`${prog.title || ""} ${prog.desc || ""} ${chName || ""}`);
+      return season.regex.test(text);
     }
     if (prog.genre === category) return true;
     if (category === "Entertainment" && prog.genre === "Comedy") return true;
     if (category === "Film" && /^film:/i.test(prog.title || "")) return true;
+    if (category === "Comedy") {
+      return prog.genre === "Comedy" || /\b(comedy|sitcom|stand-up|taskmaster|would i lie|8 out of 10|qi|have i got news|frasier|friends|simpsons|bob's burgers|family guy|modern family|big bang theory|seinfeld|brooklyn|mockumentary)\b/i.test(text);
+    }
+    if (category === "Crime & Thriller") {
+      return /\b(crime|murder|detective|police|thriller|killer|mystery|forensic|homicide|cold case|alibi|true crime|midsomer|poirot|vera|shetland|line of duty|silent witness|ncis|csi|law & order|frost|morse)\b/i.test(text);
+    }
+    if (category === "Reality") {
+      return /\b(traitors|strictly|bake off|i'm a celebrity|love island|apprentice|big brother|gogglebox|real housewives|married at first sight|made in chelsea|towie|reality|dating|celebrity|contestant|island)\b/i.test(text);
+    }
+    if (category === "Quiz & Panel") {
+      return /\b(pointless|the chase|tipping point|only connect|university challenge|countdown|house of games|taskmaster|would i lie|qi|have i got news|8 out of 10|millionaire|weakest link|quiz|game show|labyrinth|the 1% club|wheel of fortune|catchphrase|jeopardy)\b/i.test(text);
+    }
+    if (category === "Food & Lifestyle") {
+      return /\b(masterchef|saturday kitchen|bake off|cooking|chef|food|kitchen|recipe|restaurant|grand designs|location, location|homes under the hammer|escape to the country|place in the sun|antiques roadshow|bargain hunt|repair shop|gardeners' world|travel|cruising|property|lifestyle)\b/i.test(text);
+    }
+    if (category === "Soaps") {
+      return /\b(eastenders|coronation street|emmerdale|hollyoaks|casualty|doctors|neighbours|home and away|fair city|river city|pobol y cwm)\b/i.test(text);
+    }
+    if (category === "Sci-Fi & Horror") {
+      return /\b(sci-fi|science fiction|star trek|star wars|doctor who|fantasy|horror|ghost|vampire|zombie|supernatural|paranormal|witch|alien|space|syfy|stargate|buffy|x-files)\b/i.test(text);
+    }
     return false;
   }
 
@@ -2004,8 +2026,14 @@
       { id: "New", label: "✨ New & Premieres" },
       { id: "Film", label: "🎬 Films" },
       { id: "Drama", label: "🎭 Drama" },
+      { id: "Comedy", label: "😂 Comedy" },
+      { id: "Crime & Thriller", label: "🔎 Crime & Thriller" },
+      { id: "Sci-Fi & Horror", label: "🚀 Sci-Fi & Horror" },
+      { id: "Documentary", label: "🌍 Docs & Nature" },
+      { id: "Reality", label: "✨ Reality" },
+      { id: "Quiz & Panel", label: "🧠 Quiz & Panel" },
+      { id: "Food & Lifestyle", label: "🍳 Food & Homes" },
       { id: "Sport", label: "⚽ Sport" },
-      { id: "Documentary", label: "🌍 Docs" },
       { id: "Entertainment", label: "📺 Entertainment" }
     ];
     const filterPills = filterOptions
@@ -2027,7 +2055,7 @@
         if (dur < 25) return;
 
         if (filter === "New" && !p.isNew && !/^New:/i.test(p.title)) return;
-        else if (filter !== "All" && filter !== "New" && p.genre !== filter) return;
+        else if (filter !== "All" && filter !== "OnDemand" && filter !== "New" && !progMatchesCategory(p, filter, ch.name)) return;
 
         const tKey = p.title.toLowerCase().replace(/[^a-z0-9]/g, "");
         if (seenTitles.has(tKey)) return;
@@ -2345,8 +2373,8 @@
   // ========================================================================
   function renderStreamingFilters() {
     const platforms = ["All", "Netflix", "BBC iPlayer", "ITVX", "Channel 4", "Prime Video", "Disney+", "Apple TV+", "Sky / NOW", "Paramount+", "Pluto TV", "Tubi", "MUBI", "BFI Player"];
-    const types = ["All", "TV Series", "Films", "Documentaries", "Sport"];
-    const genres = ["All", "Drama", "Thriller", "Comedy", "Sci-Fi", "Documentary", "Sport"];
+    const types = ["All", "TV Series", "Films", "Documentaries", "Animation", "Reality & Lifestyle", "Sport"];
+    const genres = ["All", "Drama", "Crime", "Thriller", "Comedy", "Action", "Sci-Fi", "Fantasy", "Horror", "Romance", "Documentary", "History", "Reality", "Animation", "Family", "Sport"];
     const windows = ["All", "This Week", "Earlier This Month"];
 
     el.streamPlatformPills.innerHTML = platforms
@@ -2548,8 +2576,25 @@
 
     let items = catalogue.filter((item) => {
       if (state.streamPlatform !== "All" && item.platform !== state.streamPlatform) return false;
-      if (state.streamType !== "All" && item.type !== state.streamType) return false;
-      if (state.streamGenre !== "All" && item.genre !== state.streamGenre) return false;
+      const metaText = `${item.title || ""} ${item.genre || ""} ${item.type || ""} ${item.desc || ""} ${(item.interests || []).join(" ")}`.toLowerCase();
+      if (state.streamType !== "All") {
+        if (state.streamType === "Animation") {
+          if (!/animat|anime|cartoon|pixar|disney/i.test(metaText)) return false;
+        } else if (state.streamType === "Reality & Lifestyle") {
+          if (!/reality|cooking|food|travel|property|competition|lifestyle|bake off|traitors|dating/i.test(metaText)) return false;
+        } else if (item.type !== state.streamType) {
+          return false;
+        }
+      }
+      if (state.streamGenre !== "All") {
+        const g = state.streamGenre.toLowerCase();
+        if (String(item.genre || "").toLowerCase() !== g && !metaText.includes(g)) {
+          if (g === "crime" && !/crime|murder|detective|police|heist/i.test(metaText)) return false;
+          else if (g === "sci-fi" && !/sci-fi|science fiction|space|alien|dystopian|future/i.test(metaText)) return false;
+          else if (g === "family" && !/family|kids|children|animation|pixar/i.test(metaText)) return false;
+          else if (g !== "crime" && g !== "sci-fi" && g !== "family") return false;
+        }
+      }
       if (state.streamWindow === "This Week" && !item.thisWeek) return false;
       if (state.streamWindow === "Earlier This Month" && item.thisWeek) return false;
       if (state.streamWindow === "Earlier This Month" && item.releaseWindow !== "Last 30 Days" && !item.isLiveData) return false;
@@ -6054,25 +6099,143 @@
     }
     let step = startStep;
     let chosenPlatform = localStorage.getItem("onair_platform") || state.platform || "freeview";
+    let genreQuery = "";
+    let channelQuery = "";
+    let showQuery = "";
+    let tvmazeHits = [];
+    let tvmazeLoading = false;
+    let showSearchTimer = null;
+
     const platformDesc = {
       freeview: "Aerial / Freeview Play",
       sky: "Sky Q / Sky Stream / Glass",
       virgin: "Virgin Media TV",
       bt: "BT / EE TV",
-      freesat: "Freesat Satellite"
+      freesat: "Freesat Satellite",
+      pluto: "Free Live FAST Channels",
+      tubi: "Free Movies & Live TV"
+    };
+
+    const runWideSweepShowSearch = (query) => {
+      const q = String(query || "").trim().toLowerCase();
+      if (!q || q.length < 2) return [];
+      const seen = new Set();
+      const results = [];
+
+      // 1. Live 7-Day UK TV EPG (in-memory + local cache)
+      const localCache = getCachedStoreForSearch();
+      const platChs = getFilteredChannels("All").slice(0, 80);
+      for (const d of [0, 1, 2, 3, -1]) {
+        for (const ch of platChs) {
+          const evs = getDayScheduleForSearch(ch, d, localCache);
+          if (!Array.isArray(evs)) continue;
+          for (const ev of evs) {
+            if (!ev || !ev.title) continue;
+            if (!ev.title.toLowerCase().includes(q) && !(ev.desc || "").toLowerCase().includes(q)) continue;
+            const norm = ev.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (seen.has(norm)) continue;
+            seen.add(norm);
+            results.push({
+              id: ev.id,
+              kind: "tv",
+              channelId: ch.id,
+              title: ev.title,
+              subtitle: `Live TV • ${ch.name} (${formatDayShort(d)} ${formatTime(ev.startMin)})`,
+              badge: "Live TV",
+              genres: ev.interests || []
+            });
+            if (results.length >= 8) break;
+          }
+          if (results.length >= 8) break;
+        }
+        if (results.length >= 8) break;
+      }
+
+      // 2. Streaming Catalogue & What's New
+      const cat = getMergedCatalogue();
+      for (const s of cat) {
+        if (!s || !s.title) continue;
+        if (!s.title.toLowerCase().includes(q) && !(s.genre || "").toLowerCase().includes(q) && !(s.desc || "").toLowerCase().includes(q)) continue;
+        const norm = s.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+        results.push({
+          id: s.id,
+          kind: "stream",
+          title: s.title,
+          subtitle: `${s.platform || "Streaming"} • ${s.type || s.genre || "Show"}`,
+          badge: s.platform || "Streaming",
+          genres: s.interests || []
+        });
+        if (results.length >= 14) break;
+      }
+
+      // 3. Live TVMaze wide-sweep results (if fetched)
+      for (const tv of tvmazeHits) {
+        const norm = tv.title.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+        results.push(tv);
+        if (results.length >= 20) break;
+      }
+
+      return results;
+    };
+
+    const getRecommendedStarterShows = () => {
+      const cat = getMergedCatalogue();
+      const selected = state.interests;
+      if (selected.size > 0) {
+        const scored = cat
+          .map((item) => {
+            const text = `${item.title || ""} ${item.genre || ""} ${item.desc || ""} ${(item.interests || []).join(" ")}`.toLowerCase();
+            let score = (item.rating || 3.5) * 5;
+            selected.forEach((interest) => {
+              if ((item.interests || []).includes(interest)) score += 40;
+              else {
+                const words = interest.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+                if (words.some((w) => text.includes(w))) score += 18;
+              }
+            });
+            return { item, score };
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 10)
+          .map((x) => x.item);
+        if (scored.length) return scored;
+      }
+      return cat.slice(0, 10);
+    };
+
+    const mapTvmazeGenresToInterests = (tvmGenres = []) => {
+      const mapped = [];
+      const gStr = tvmGenres.join(" ").toLowerCase();
+      if (/drama/.test(gStr)) mapped.push("Prestige Drama");
+      if (/crime|thriller|mystery/.test(gStr)) mapped.push("Crime & Thrillers");
+      if (/comedy/.test(gStr)) mapped.push("Comedy & Sitcoms");
+      if (/science-fiction|fantasy/.test(gStr)) mapped.push("Sci-Fi & Fantasy");
+      if (/horror|supernatural/.test(gStr)) mapped.push("Horror & Supernatural");
+      if (/action|adventure|espionage/.test(gStr)) mapped.push("Action & Adventure");
+      if (/documentary|nature/.test(gStr)) mapped.push("True Crime & Documentaries");
+      if (/history/.test(gStr)) mapped.push("Arts, History & Culture");
+      if (/music/.test(gStr)) mapped.push("Music & Concerts");
+      if (/family|children|anime/.test(gStr)) mapped.push("Family & Kids");
+      if (/food|travel/.test(gStr)) mapped.push("Food, Cooking & Travel");
+      if (/sports/.test(gStr)) mapped.push("Live Sport");
+      return mapped;
     };
 
     function renderStep() {
-      const dots = [1, 2, 3]
+      const dots = [1, 2, 3, 4]
         .map((n) => `<div class="onboard-step-dot ${n === step ? "is-active" : n < step ? "is-done" : ""}"></div>`)
         .join("");
 
       if (step === 1) {
         el.onboardingBody.innerHTML = `
           <div class="onboard-steps">${dots}</div>
-          <div class="modal-kicker"><span class="mini-tag">Step 1 of 3 &bull; Required</span></div>
+          <div class="modal-kicker"><span class="mini-tag">Step 1 of 4 &bull; Platform &amp; Basics</span></div>
           <h2 id="onboardTitle" class="modal-title">Welcome to OnAir UK</h2>
-          <p class="modal-synopsis" style="margin-bottom:8px;">Which TV platform are you watching on? This sets your channel numbers and lineups.</p>
+          <p class="modal-synopsis" style="margin-bottom:8px;">Choose your UK/Ireland TV platform, region, and quick display preferences.</p>
           <div class="onboard-platform-grid">
             ${PLATFORMS.map(
               (p) => `
@@ -6083,16 +6246,45 @@
             `
             ).join("")}
           </div>
-          <div style="margin-top:12px;">
-            <label for="obRegionSelect" style="display:block; font-size:12px; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">TV Region (UK &amp; Ireland)</label>
-            <select id="obRegionSelect" class="settings-select" style="width:100%;">
-              ${(ONAIR_LIVE.REGIONS || []).map((r) => `<option value="${r.id}" ${ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().id === r.id ? "selected" : ""}>${r.name}</option>`).join("")}
-            </select>
+          <div class="onboard-prefs-grid">
+            <div>
+              <label for="obRegionSelect" class="onboard-field-lbl">TV Region (UK &amp; Ireland)</label>
+              <select id="obRegionSelect" class="settings-select" style="width:100%;">
+                ${(ONAIR_LIVE.REGIONS || []).map((r) => `<option value="${r.id}" ${ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().id === r.id ? "selected" : ""}>${r.name}</option>`).join("")}
+              </select>
+            </div>
+            <div>
+              <label for="obThemeSelect" class="onboard-field-lbl">Appearance Theme</label>
+              <select id="obThemeSelect" class="settings-select" style="width:100%;">
+                <option value="system" ${state.theme === "system" ? "selected" : ""}>Match System (Auto)</option>
+                <option value="light" ${state.theme === "light" ? "selected" : ""}>Light Editorial</option>
+                <option value="dark" ${state.theme === "dark" ? "selected" : ""}>Dark Mode</option>
+              </select>
+            </div>
+            <div>
+              <label for="obClockSelect" class="onboard-field-lbl">Clock Format</label>
+              <select id="obClockSelect" class="settings-select" style="width:100%;">
+                <option value="24h" ${state.timeFormat === "24h" ? "selected" : ""}>24-Hour (20:30)</option>
+                <option value="12h" ${state.timeFormat === "12h" ? "selected" : ""}>12-Hour (8:30pm)</option>
+              </select>
+            </div>
+            <div>
+              <label for="obStartTimeSelect" class="onboard-field-lbl">Open TV Guide At</label>
+              <select id="obStartTimeSelect" class="settings-select" style="width:100%;">
+                <option value="now" ${state.defaultStartTime === "now" ? "selected" : ""}>Right Now (Live)</option>
+                <option value="20" ${state.defaultStartTime === "20" ? "selected" : ""}>Primetime (20:00)</option>
+                <option value="9" ${state.defaultStartTime === "9" ? "selected" : ""}>Morning (09:00)</option>
+              </select>
+            </div>
           </div>
+          <label style="display:inline-flex; align-items:center; gap:8px; margin-top:10px; font-size:12.5px; font-weight:600; color:var(--text-secondary); cursor:pointer;">
+            <input id="obHidePlusOne" type="checkbox" ${state.hidePlusOne ? "checked" : ""} />
+            Hide +1 timeshift channels (ITV+1, Channel 4+1, etc.)
+          </label>
           <div class="onboard-footer">
-            <span style="font-size:12px; color:var(--text-muted);">You can change this anytime in Settings or the top bar.</span>
+            <span style="font-size:12px; color:var(--text-muted);">Change anytime in Settings.</span>
             <div class="onboard-footer-right">
-              <button id="obNextBtn" class="btn-primary" type="button">Next: Genres &rarr;</button>
+              <button id="obNextBtn" class="btn-primary" type="button">Next: Genres (${INTEREST_CATEGORIES.length}) &rarr;</button>
             </div>
           </div>
         `;
@@ -6106,9 +6298,16 @@
           };
         });
         const obRegionEl = document.getElementById("obRegionSelect");
-        if (obRegionEl) {
-          obRegionEl.onchange = (e) => switchRegion(e.target.value);
-        }
+        if (obRegionEl) obRegionEl.onchange = (e) => switchRegion(e.target.value);
+        const obThemeEl = document.getElementById("obThemeSelect");
+        if (obThemeEl) obThemeEl.onchange = (e) => { state.theme = e.target.value; applyTheme(); };
+        const obClockEl = document.getElementById("obClockSelect");
+        if (obClockEl) obClockEl.onchange = (e) => { state.timeFormat = e.target.value; localStorage.setItem("onair_time_format", state.timeFormat); };
+        const obStartEl = document.getElementById("obStartTimeSelect");
+        if (obStartEl) obStartEl.onchange = (e) => { state.defaultStartTime = e.target.value; localStorage.setItem("onair_start_time", state.defaultStartTime); };
+        const obPlusOneEl = document.getElementById("obHidePlusOne");
+        if (obPlusOneEl) obPlusOneEl.onchange = (e) => { state.hidePlusOne = Boolean(e.target.checked); localStorage.setItem("onair_hide_plus_one", state.hidePlusOne ? "1" : "0"); };
+
         document.getElementById("obNextBtn").onclick = () => {
           state.platform = chosenPlatform;
           localStorage.setItem("onair_platform", chosenPlatform);
@@ -6116,26 +6315,67 @@
           renderStep();
         };
       } else if (step === 2) {
+        const gq = genreQuery.trim().toLowerCase();
+        const visibleGenres = INTEREST_CATEGORIES.filter((tag) => !gq || tag.toLowerCase().includes(gq));
         el.onboardingBody.innerHTML = `
           <div class="onboard-steps">${dots}</div>
-          <div class="modal-kicker"><span class="mini-tag">Step 2 of 3 &bull; Optional</span></div>
-          <h2 id="onboardTitle" class="modal-title">What genres &amp; topics do you like?</h2>
-          <p class="modal-synopsis" style="margin-bottom:4px;">Pick any you enjoy to personalise <strong>What to Watch</strong>, or skip this step.</p>
-          <div class="onboard-chips">
-            ${INTEREST_CATEGORIES.map(
-              (tag) => `
-              <button class="pill-btn ${state.interests.has(tag) ? "is-active" : ""}" data-ob-interest="${tag}" type="button">${tag}</button>
-            `
-            ).join("")}
+          <div class="modal-kicker">
+            <span class="mini-tag">Step 2 of 4 &bull; Optional</span>
+            <span class="mini-tag catchup">${state.interests.size} selected</span>
           </div>
+          <h2 id="onboardTitle" class="modal-title">What genres &amp; topics do you love?</h2>
+          <p class="modal-synopsis" style="margin-bottom:8px;">Pick from <strong>${INTEREST_CATEGORIES.length} categories</strong> to tailor <strong>What to Watch</strong> and your initial show recommendations.</p>
+
+          <div class="onboard-search-row">
+            <input id="obGenreSearch" class="settings-select" type="search" placeholder="Filter genres (e.g. crime, food, quiz, horror, nature)..." value="${escapeHtml(genreQuery)}" style="flex:1; min-width:180px;" />
+            <button id="obPresetUkBtn" class="ghost-btn" type="button" style="padding:5px 10px; font-size:11.5px;">🇬🇧 UK Mix</button>
+            <button id="obPresetDramaBtn" class="ghost-btn" type="button" style="padding:5px 10px; font-size:11.5px;">🔎 Drama &amp; Crime</button>
+            <button id="obPresetClearBtn" class="ghost-btn" type="button" style="padding:5px 10px; font-size:11.5px;">Clear</button>
+          </div>
+
+          <div class="onboard-chips" style="max-height:220px; overflow-y:auto; padding-right:4px;">
+            ${
+              visibleGenres.length
+                ? visibleGenres
+                    .map(
+                      (tag) => `
+                  <button class="pill-btn ${state.interests.has(tag) ? "is-active" : ""}" data-ob-interest="${escapeHtml(tag)}" type="button">${state.interests.has(tag) ? "✓ " : "+ "}${escapeHtml(tag)}</button>
+                `
+                    )
+                    .join("")
+                : `<span style="font-size:12px; color:var(--text-muted);">No genres match "${escapeHtml(genreQuery)}".</span>`
+            }
+          </div>
+
           <div class="onboard-footer">
             <button id="obBackBtn" class="btn-secondary" type="button">&larr; Back</button>
             <div class="onboard-footer-right">
               <button id="obSkipBtn" class="ghost-btn" style="color:var(--text-secondary); border-color:var(--border-subtle);" type="button">Skip</button>
-              <button id="obNextBtn" class="btn-primary" type="button">Next: Shows &amp; Channels &rarr;</button>
+              <button id="obNextBtn" class="btn-primary" type="button">Next: Search Shows &amp; Channels &rarr;</button>
             </div>
           </div>
         `;
+
+        const gSearch = document.getElementById("obGenreSearch");
+        if (gSearch) {
+          gSearch.oninput = (e) => {
+            genreQuery = e.target.value || "";
+            renderStep();
+            const again = document.getElementById("obGenreSearch");
+            if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+          };
+        }
+        const applyPreset = (tags) => {
+          state.interests.clear();
+          tags.forEach((t) => state.interests.add(t));
+          localStorage.setItem("onair_interests", JSON.stringify([...state.interests]));
+          renderStep();
+        };
+        document.getElementById("obPresetUkBtn").onclick = () =>
+          applyPreset(["Prestige Drama", "Crime & Thrillers", "Comedy & Sitcoms", "Quiz, Game & Panel Shows", "Nature & Wildlife", "Food, Cooking & Travel"]);
+        document.getElementById("obPresetDramaBtn").onclick = () =>
+          applyPreset(["Prestige Drama", "Crime & Thrillers", "Period Drama & Costume", "True Crime & Documentaries", "World Cinema & International TV"]);
+        document.getElementById("obPresetClearBtn").onclick = () => applyPreset([]);
 
         el.onboardingBody.querySelectorAll("[data-ob-interest]").forEach((btn) => {
           btn.onclick = () => {
@@ -6146,54 +6386,142 @@
             renderStep();
           };
         });
-        document.getElementById("obBackBtn").onclick = () => {
-          step = 1;
-          renderStep();
-        };
-        document.getElementById("obSkipBtn").onclick = () => finishOnboarding();
-        document.getElementById("obNextBtn").onclick = () => {
-          step = 3;
-          renderStep();
-        };
-      } else {
-        const starterChannels = getFilteredChannels("All").slice(0, 10);
-        const starterShows = getMergedCatalogue().slice(0, 8);
+        document.getElementById("obBackBtn").onclick = () => { step = 1; renderStep(); };
+        document.getElementById("obSkipBtn").onclick = () => { step = 3; renderStep(); };
+        document.getElementById("obNextBtn").onclick = () => { step = 3; renderStep(); };
+      } else if (step === 3) {
+        const allPlatChannels = getFilteredChannels("All");
+        const cq = channelQuery.trim().toLowerCase();
+        const visibleChannels = (cq
+          ? allPlatChannels.filter((c) => {
+              const num = c.numbers[state.platform] != null ? String(c.numbers[state.platform]) : "";
+              return (c.name || "").toLowerCase().includes(cq) || num.includes(cq);
+            })
+          : allPlatChannels
+        ).slice(0, 18);
+
+        const sq = showQuery.trim();
+        const wideSweepResults = sq.length >= 2 ? runWideSweepShowSearch(sq) : [];
+        const starterShows = getRecommendedStarterShows();
+
         el.onboardingBody.innerHTML = `
           <div class="onboard-steps">${dots}</div>
-          <div class="modal-kicker"><span class="mini-tag">Step 3 of 3 &bull; Optional</span></div>
-          <h2 id="onboardTitle" class="modal-title">Pick favourite channels &amp; shows</h2>
-          <p class="modal-synopsis" style="margin-bottom:4px;">Star channels for quick filtering or save shows to your Watchlist — or skip straight to the guide.</p>
+          <div class="modal-kicker">
+            <span class="mini-tag">Step 3 of 4 &bull; Wide-Sweep Discovery</span>
+            <span class="mini-tag catchup">${state.favorites.size} channels &bull; ${state.watchlist.length} shows</span>
+          </div>
+          <h2 id="onboardTitle" class="modal-title">Search shows, films &amp; channels</h2>
+          <p class="modal-synopsis" style="margin-bottom:8px;">Search across live UK TV, streaming &amp; TVMaze to build your Watchlist, or star favourite channels.</p>
 
-          <div class="onboard-subhead">Popular Channels on ${PLATFORMS.find((p) => p.id === state.platform)?.name || "Your Platform"}</div>
-          <div class="onboard-chips">
-            ${starterChannels
-              .map(
-                (ch) => `
-              <button class="pill-btn ${state.favorites.has(ch.id) ? "is-active" : ""}" data-ob-fav="${ch.id}" type="button">&#9733; ${ch.numbers[state.platform]} ${ch.name}</button>
-            `
-              )
-              .join("")}
+          <div class="onboard-subhead">1. Search &amp; Star Channels on ${escapeHtml(PLATFORMS.find((p) => p.id === state.platform)?.name || "Your Platform")}</div>
+          <input id="obChannelSearch" class="settings-select" type="search" placeholder="Search all ${allPlatChannels.length} channels by name or number (e.g. BBC, Film4, Sky, 101)..." value="${escapeHtml(channelQuery)}" style="width:100%; margin-bottom:8px;" />
+          <div class="onboard-chips" style="max-height:115px; overflow-y:auto;">
+            ${
+              visibleChannels.length
+                ? visibleChannels
+                    .map(
+                      (ch) => `
+                  <button class="pill-btn ${state.favorites.has(ch.id) ? "is-active" : ""}" data-ob-fav="${escapeHtml(ch.id)}" type="button">&#9733; ${ch.numbers[state.platform]} ${escapeHtml(ch.name)}</button>
+                `
+                    )
+                    .join("")
+                : `<span style="font-size:12px; color:var(--text-muted);">No channels match "${escapeHtml(channelQuery)}".</span>`
+            }
           </div>
 
-          <div class="onboard-subhead">Popular Shows &amp; Films to Watchlist</div>
-          <div class="onboard-chips">
-            ${starterShows
-              .map(
-                (s) => `
-              <button class="pill-btn ${isInWatchlist(s.id) ? "is-active" : ""}" data-ob-show="${s.id}" type="button">${isInWatchlist(s.id) ? "✓ " : "+ "}${s.title}</button>
-            `
-              )
-              .join("")}
+          <div class="onboard-subhead" style="margin-top:12px;">2. Wide-Sweep Search for Shows &amp; Films (Live TV + Streaming + TVMaze)</div>
+          <input id="obShowSearch" class="settings-select" type="search" placeholder="Type any show or film (e.g. Taskmaster, Severance, EastEnders, Doctor Who)..." value="${escapeHtml(showQuery)}" style="width:100%; margin-bottom:8px;" />
+
+          <div id="obShowResultsArea" class="onboard-chips" style="max-height:165px; overflow-y:auto;">
+            ${
+              sq.length >= 2
+                ? wideSweepResults.length
+                  ? wideSweepResults
+                      .map((r) => {
+                        const saved = isInWatchlist(r.id);
+                        return `
+                          <button class="pill-btn ${saved ? "is-active" : ""}" data-ob-sweep-id="${escapeHtml(r.id)}" type="button" title="${escapeHtml(r.subtitle)}">
+                            ${saved ? "✓ " : "+ "}<strong>${escapeHtml(r.title)}</strong> <span style="opacity:0.7; font-size:11px;">(${escapeHtml(r.badge)})</span>
+                          </button>
+                        `;
+                      })
+                      .join("") + (tvmazeLoading ? `<span style="font-size:11.5px; color:var(--text-muted); padding:4px 6px;">Searching TVMaze...</span>` : "")
+                  : `<span style="font-size:12px; color:var(--text-muted);">${tvmazeLoading ? "Searching live TV, streaming & TVMaze..." : `No matches for "${escapeHtml(sq)}" yet.`}</span>`
+                : starterShows
+                    .map((s) => {
+                      const saved = isInWatchlist(s.id);
+                      return `
+                        <button class="pill-btn ${saved ? "is-active" : ""}" data-ob-show="${escapeHtml(s.id)}" type="button">${saved ? "✓ " : "+ "}${escapeHtml(s.title)}</button>
+                      `;
+                    })
+                    .join("")
+            }
           </div>
 
           <div class="onboard-footer">
             <button id="obBackBtn" class="btn-secondary" type="button">&larr; Back</button>
             <div class="onboard-footer-right">
               <button id="obSkipBtn" class="ghost-btn" style="color:var(--text-secondary); border-color:var(--border-subtle);" type="button">Skip &amp; Finish</button>
-              <button id="obFinishBtn" class="btn-primary" type="button">Save &amp; Start Watching</button>
+              <button id="obNextBtn" class="btn-primary" type="button">Review &amp; Finish &rarr;</button>
             </div>
           </div>
         `;
+
+        const chSearchEl = document.getElementById("obChannelSearch");
+        if (chSearchEl) {
+          chSearchEl.oninput = (e) => {
+            channelQuery = e.target.value || "";
+            renderStep();
+            const again = document.getElementById("obChannelSearch");
+            if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+          };
+        }
+
+        const showSearchEl = document.getElementById("obShowSearch");
+        if (showSearchEl) {
+          showSearchEl.oninput = (e) => {
+            showQuery = e.target.value || "";
+            const q = showQuery.trim();
+            if (showSearchTimer) clearTimeout(showSearchTimer);
+            if (q.length >= 2) {
+              tvmazeLoading = true;
+              showSearchTimer = setTimeout(async () => {
+                try {
+                  const res = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`);
+                  const arr = res.ok ? await res.json() : [];
+                  if (showQuery.trim() !== q) return;
+                  tvmazeHits = (Array.isArray(arr) ? arr : []).slice(0, 8).map((entry) => {
+                    const sh = entry.show || {};
+                    const net = (sh.network && sh.network.name) || (sh.webChannel && sh.webChannel.name) || "TV Series";
+                    return {
+                      id: `tvm-ob-${sh.id}`,
+                      kind: "stream",
+                      title: sh.name || "Untitled",
+                      subtitle: `${net} • ${(sh.genres || []).join(", ") || "TV Series"}`,
+                      badge: net,
+                      genres: mapTvmazeGenresToInterests(sh.genres || [])
+                    };
+                  });
+                } catch {
+                  tvmazeHits = [];
+                } finally {
+                  tvmazeLoading = false;
+                  if (step === 3 && showQuery.trim() === q) {
+                    renderStep();
+                    const again = document.getElementById("obShowSearch");
+                    if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+                  }
+                }
+              }, 350);
+            } else {
+              tvmazeHits = [];
+              tvmazeLoading = false;
+            }
+            renderStep();
+            const again = document.getElementById("obShowSearch");
+            if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+          };
+        }
 
         el.onboardingBody.querySelectorAll("[data-ob-fav]").forEach((btn) => {
           btn.onclick = () => {
@@ -6204,6 +6532,7 @@
             renderStep();
           };
         });
+
         el.onboardingBody.querySelectorAll("[data-ob-show]").forEach((btn) => {
           btn.onclick = () => {
             const s = starterShows.find((item) => item.id === btn.dataset.obShow);
@@ -6213,11 +6542,68 @@
             }
           };
         });
-        document.getElementById("obBackBtn").onclick = () => {
-          step = 2;
-          renderStep();
-        };
+
+        el.onboardingBody.querySelectorAll("[data-ob-sweep-id]").forEach((btn) => {
+          btn.onclick = () => {
+            const hit = wideSweepResults.find((item) => item.id === btn.dataset.obSweepId);
+            if (hit) {
+              toggleWatchlist({
+                id: hit.id,
+                kind: hit.kind || "stream",
+                channelId: hit.channelId || undefined,
+                title: hit.title,
+                subtitle: hit.subtitle
+              });
+              // Auto-learn genres from any show the user explicitly searches & watchlists!
+              if (Array.isArray(hit.genres) && hit.genres.length) {
+                hit.genres.forEach((g) => state.interests.add(g));
+                localStorage.setItem("onair_interests", JSON.stringify([...state.interests]));
+              }
+              renderStep();
+            }
+          };
+        });
+
+        document.getElementById("obBackBtn").onclick = () => { step = 2; renderStep(); };
         document.getElementById("obSkipBtn").onclick = () => finishOnboarding();
+        document.getElementById("obNextBtn").onclick = () => { step = 4; renderStep(); };
+      } else {
+        const platName = PLATFORMS.find((p) => p.id === state.platform)?.name || state.platform;
+        const regName = (ONAIR_LIVE.getRegion && ONAIR_LIVE.getRegion().name) || "UK";
+        el.onboardingBody.innerHTML = `
+          <div class="onboard-steps">${dots}</div>
+          <div class="modal-kicker"><span class="mini-tag live">Step 4 of 4 &bull; All Set!</span></div>
+          <h2 id="onboardTitle" class="modal-title">Your OnAir UK Guide is Ready</h2>
+          <p class="modal-synopsis" style="margin-bottom:12px;">Here's a quick summary of your personalised TV &amp; streaming setup.</p>
+
+          <div class="onboard-summary-grid">
+            <div class="onboard-summary-box">
+              <span>TV Platform &amp; Region</span>
+              <strong>${escapeHtml(platName)} &bull; ${escapeHtml(regName)}</strong>
+            </div>
+            <div class="onboard-summary-box">
+              <span>Display &amp; Clock</span>
+              <strong>${escapeHtml(state.theme === "system" ? "Auto Theme" : state.theme === "dark" ? "Dark" : "Light")} &bull; ${state.timeFormat === "12h" ? "12-Hour" : "24-Hour"}</strong>
+            </div>
+            <div class="onboard-summary-box">
+              <span>Selected Genres</span>
+              <strong>${state.interests.size} ${state.interests.size === 1 ? "category" : "categories"}</strong>
+            </div>
+            <div class="onboard-summary-box">
+              <span>Saved Favourites &amp; Shows</span>
+              <strong>${state.favorites.size} channels &bull; ${state.watchlist.length} watchlisted</strong>
+            </div>
+          </div>
+
+          <div class="onboard-footer">
+            <button id="obBackBtn" class="btn-secondary" type="button">&larr; Back</button>
+            <div class="onboard-footer-right">
+              <button id="obFinishBtn" class="btn-primary" type="button">🚀 Save &amp; Start Watching</button>
+            </div>
+          </div>
+        `;
+
+        document.getElementById("obBackBtn").onclick = () => { step = 3; renderStep(); };
         document.getElementById("obFinishBtn").onclick = () => finishOnboarding();
       }
     }

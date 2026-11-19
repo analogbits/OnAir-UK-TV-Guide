@@ -815,14 +815,26 @@ const ONAIR_LIVE = (() => {
     const text = `${title} ${sy}`.toLowerCase();
     const list = [];
     if (genre === "Drama") list.push("Prestige Drama");
-    if (genre === "Comedy") list.push("Comedy & Sitcoms");
+    if (genre === "Comedy" || /\b(sitcom|stand-up|comedy|comedian|mockumentary|panel show|funny)\b/i.test(text)) list.push("Comedy & Sitcoms");
     if (genre === "Sport") list.push("Live Sport");
     if (genre === "Documentary") list.push("True Crime & Documentaries");
     if (genre === "Film") list.push("Blockbuster Films");
-    if (/crime|murder|detective|police|thriller|killer|mystery/i.test(text)) list.push("Crime & Thrillers");
-    if (/sci-fi|space|alien|future|star trek|doctor who|fantasy|dragon/i.test(text)) list.push("Sci-Fi & Fantasy");
-    if (/history|art|bbc four|world|culture|symphony|opera|museum/i.test(text)) list.push("Arts, History & Culture");
-    if (/french|italian|spanish|korean|japanese|subtitled|foreign/i.test(text)) list.push("World Cinema & International TV");
+    if (genre === "Kids" || /\b(cbbc|cbeebies|bluey|pixar|disney|animated|animation|family film|kids)\b/i.test(text)) list.push("Family & Kids");
+    if (genre === "Music" || /\b(concert|glastonbury|jools holland|proms|music video|mtv|pop hits|rock|jazz|singing)\b/i.test(text)) list.push("Music & Concerts");
+    if (/\b(crime|murder|detective|police|thriller|killer|mystery|forensic|homicide|cold case|investigation)\b/i.test(text)) list.push("Crime & Thrillers");
+    if (/\b(sci-fi|science fiction|space|alien|future|star trek|star wars|doctor who|fantasy|dragon|wizard|cyberpunk|dystopian)\b/i.test(text)) list.push("Sci-Fi & Fantasy");
+    if (/\b(horror|ghost|haunted|vampire|zombie|supernatural|paranormal|witch|demon|slasher|exorcist|spooky)\b/i.test(text)) list.push("Horror & Supernatural");
+    if (/\b(period drama|victorian|regency|edwardian|tudor|bridgerton|downton|call the midwife|all creatures|jane austen|costume drama|19th century|18th century)\b/i.test(text)) list.push("Period Drama & Costume");
+    if (/\b(action|adventure|espionage|spy|mission|heist|martial arts|superhero|bond|bourne|rescue)\b/i.test(text)) list.push("Action & Adventure");
+    if (/\b(history|art|bbc four|culture|symphony|opera|museum|archaeology|renaissance|civilisation|empire)\b/i.test(text)) list.push("Arts, History & Culture");
+    if (/\b(nature|wildlife|attenborough|planet earth|springwatch|autumnwatch|countryfile|safari|ocean|animal|zoo|vet|supervet)\b/i.test(text)) list.push("Nature & Wildlife");
+    if (/\b(french|italian|spanish|korean|japanese|nordic|scandi|subtitled|foreign|walter presents|anime)\b/i.test(text)) list.push("World Cinema & International TV");
+    if (/\b(cult|indie|arthouse|classic cinema|b-movie|avant-garde|sundance|cannes)\b/i.test(text)) list.push("Cult Classics & Indie");
+    if (/\b(traitors|strictly|bake off|i'm a celebrity|love island|apprentice|big brother|gogglebox|real housewives|married at first sight|made in chelsea|towie|geordie shore|reality|contestant|eliminated)\b/i.test(text)) list.push("Reality & Competition");
+    if (/\b(eastenders|coronation street|emmerdale|hollyoaks|casualty|holby|doctors|neighbours|home and away|fair city|river city|pobol y cwm|soap)\b/i.test(text)) list.push("Soaps & Continuing Drama");
+    if (/\b(pointless|the chase|tipping point|only connect|university challenge|countdown|richard osman|house of games|taskmaster|would i lie to you|qi|have i got news|8 out of 10 cats|mock the week|who wants to be a millionaire|weakest link|labyrinth|quiz|game show|panel)\b/i.test(text)) list.push("Quiz, Game & Panel Shows");
+    if (/\b(masterchef|saturday kitchen|great british menu|bake off|cooking|chef|recipe|food|restaurant|kitchen|culinary|travel|palin|portillo|race across the world|holiday|journey|cruising)\b/i.test(text)) list.push("Food, Cooking & Travel");
+    if (/\b(grand designs|location, location|homes under the hammer|escape to the country|a place in the sun|antiques roadshow|bargain hunt|flog it|salvage hunters|repair shop|property|renovation|auction|antique)\b/i.test(text)) list.push("Property, Homes & Antiques");
     return [...new Set(list)];
   }
 
