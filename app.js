@@ -243,8 +243,95 @@
       return timeMachineEpg[ch.sid] || [];
     }
     const dayMap = liveEpgByDay.get(dayOffset);
-    if (!dayMap || !dayMap[ch.sid]) return null; // null = not fetched yet
-    return dayMap[ch.sid];
+    if (dayMap && Array.isArray(dayMap[ch.sid]) && dayMap[ch.sid].length) {
+      return dayMap[ch.sid];
+    }
+
+    // Check persistent storage / indexedDB / localStorage cache
+    const localCache = getCachedStoreForSearch();
+    const dateStr = getSkyDateStrForOffset(dayOffset);
+    const epgDay = localCache && localCache[`epg_${dateStr}`];
+    if (epgDay && epgDay[ch.sid] && Array.isArray(epgDay[ch.sid].events) && epgDay[ch.sid].events.length) {
+      if (!liveEpgByDay.has(dayOffset)) liveEpgByDay.set(dayOffset, {});
+      liveEpgByDay.get(dayOffset)[ch.sid] = epgDay[ch.sid].events;
+      return epgDay[ch.sid].events;
+    }
+
+    // Check FAST Pluto/Tubi schedule cache
+    if (ch.plutoSlug || ch.tubiId) {
+      const plutoBucket = localCache && (localCache[`pluto_v2_${dateStr}`] || localCache[`pluto_${dateStr}`]);
+      if (ch.plutoSlug && plutoBucket && plutoBucket.schedules) {
+        const ps = plutoBucket.schedules[ch.id] || plutoBucket.schedules[ch.sid];
+        if (Array.isArray(ps) && ps.length) return ps;
+      }
+      const tubiBucket = localCache && (localCache[`tubi_v2_${dateStr}`] || localCache[`tubi_${dateStr}`]);
+      if (ch.tubiId && tubiBucket && tubiBucket.schedules) {
+        const ts = tubiBucket.schedules[ch.id] || tubiBucket.schedules[ch.sid];
+        if (Array.isArray(ts) && ts.length) return ts;
+      }
+    }
+
+    // Check repo past EPG for past days
+    if (dayOffset < 0 && typeof window !== "undefined" && window.ONAIR_PAST_EPG && window.ONAIR_PAST_EPG[dateStr]) {
+      const pastDay = window.ONAIR_PAST_EPG[dateStr];
+      const normKey = ch.id.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const pastEvs = pastDay[normKey] || pastDay[ch.id];
+      if (Array.isArray(pastEvs) && pastEvs.length) {
+        const mapped = pastEvs.map((ev, idx) => ({
+          id: `pastev-${dateStr}-${ch.sid}-${idx}`,
+          channelId: ch.id,
+          sid: ch.sid,
+          dayOffset,
+          title: ev.t || "Broadcast",
+          genre: ch.category || "Entertainment",
+          rating: "PG",
+          ep: ev.s2 || "",
+          desc: ev.s2 ? `${ev.t}: ${ev.s2}` : ev.t,
+          cast: ch.category || "Entertainment",
+          stars: null,
+          isNew: false,
+          isRepeat: false,
+          isLiveData: true,
+          thisWeek: false,
+          startMin: Math.max(0, Math.floor((ev.st % 86400) / 60)),
+          endMin: Math.min(1440, Math.max(0, Math.floor((ev.st % 86400) / 60) + (ev.d || 30)))
+        }));
+        if (!liveEpgByDay.has(dayOffset)) liveEpgByDay.set(dayOffset, {});
+        liveEpgByDay.get(dayOffset)[ch.sid] = mapped;
+        return mapped;
+      }
+    }
+
+    if (dayMap && dayMap[ch.sid] !== undefined) return dayMap[ch.sid];
+    return null; // null = not fetched yet
+  }
+
+  // Queue day fetches sequentially to prevent rate limits or 429 cooldowns from awk.epgsky.com
+  const dayFetchQueue = [];
+  let isProcessingDayQueue = false;
+
+  async function enqueueDayScheduleFetch(channels, dayOffset) {
+    if (state.timeMachineDate) return;
+    if (!dayFetchQueue.includes(dayOffset)) {
+      dayFetchQueue.push(dayOffset);
+    }
+    if (isProcessingDayQueue) return;
+    isProcessingDayQueue = true;
+    try {
+      while (dayFetchQueue.length > 0) {
+        let targetDay;
+        const activeIdx = dayFetchQueue.indexOf(state.dayOffset);
+        if (activeIdx !== -1) {
+          targetDay = dayFetchQueue.splice(activeIdx, 1)[0];
+        } else {
+          targetDay = dayFetchQueue.shift();
+        }
+        await ensureSchedulesForChannels(channels, targetDay);
+        await new Promise((r) => setTimeout(r, 80));
+      }
+    } finally {
+      isProcessingDayQueue = false;
+    }
   }
 
   async function ensureSchedulesForChannels(channels, dayOffset, force = false) {
@@ -311,6 +398,10 @@
       const fetched = await ONAIR_LIVE.fetchSkySchedulesForSids(batch, dayOffset, force).catch(() => ({}));
       const currentMap = liveEpgByDay.get(dayOffset) || {};
       Object.assign(currentMap, fetched);
+      // Mark attempted SIDs so we don't spam empty channels in an infinite loop
+      batch.forEach((sid) => {
+        if (!currentMap[sid]) currentMap[sid] = [];
+      });
       liveEpgByDay.set(dayOffset, currentMap);
 
       if (state.view === "epg") renderEPG(false);
@@ -1060,13 +1151,14 @@
 
     if (triggerFetch) {
       const toFetch = state.epgCategory === "Favorites" ? getFilteredChannels("Favorites") : platformChannels;
-      // Fetch current/Today first for instant responsiveness
-      ensureSchedulesForChannels(toFetch, state.dayOffset);
+      // Fetch current/Today first, then queue adjacent days smoothly without rate limits
+      enqueueDayScheduleFetch(toFetch, state.dayOffset);
       if (!isSingleDay) {
-        // Fetch adjacent days in the continuous range smoothly in the background
+        if (dayOffsets.includes(state.dayOffset + 1)) enqueueDayScheduleFetch(toFetch, state.dayOffset + 1);
+        if (dayOffsets.includes(state.dayOffset - 1)) enqueueDayScheduleFetch(toFetch, state.dayOffset - 1);
         dayOffsets.forEach((d) => {
-          if (d !== state.dayOffset) {
-            ensureSchedulesForChannels(toFetch, d);
+          if (d !== state.dayOffset && d !== state.dayOffset + 1 && d !== state.dayOffset - 1) {
+            enqueueDayScheduleFetch(toFetch, d);
           }
         });
       }
@@ -1105,11 +1197,14 @@
       for (let m = 0; m < 1440; m += 30) {
         const isHour = m % 60 === 0;
         if (m === 0) {
+          // Double-width 60-minute tick for midnight: gives badge & 00:00 plenty of room, avoids squishing against 00:30
           ticksHtml += `
-            <div class="epg-time-tick is-hour is-day-start" style="width:${tickWidth}px;">
-              <span class="day-marker-badge ${badgeClass}">${escapeHtml(dayLabel)}</span> 00:00
+            <div class="epg-time-tick is-hour is-day-start" style="width:${tickWidth * 2}px;">
+              <span class="day-marker-badge ${badgeClass}">${escapeHtml(dayLabel)}</span>
+              <span>00:00</span>
             </div>
           `;
+          m += 30; // Advances to 01:00
         } else {
           ticksHtml += `<div class="epg-time-tick ${isHour ? "is-hour" : ""}" style="width:${tickWidth}px;">${formatTime(m)}</div>`;
         }
@@ -1136,17 +1231,17 @@
 
             if (progs === null) {
               const dLabel = formatDayShort(d);
-              progsHtml += `<div class="epg-day-placeholder" style="left:${dayStartPx}px; width:${dayWidth}px;">Fetching ${escapeHtml(dLabel)} schedule...</div>`;
+              progsHtml += `<div class="epg-day-placeholder" style="left:${dayStartPx}px; width:${dayWidth}px;"><span>Fetching ${escapeHtml(dLabel)} schedule...</span></div>`;
             } else if (progs.length === 0) {
               const emptyMsg = state.timeMachineDate
                 ? `No archive data for ${escapeHtml(ch.name)} on ${escapeHtml(state.timeMachineDate)}`
                 : `No broadcast schedule published for ${escapeHtml(formatDayShort(d))}`;
-              progsHtml += `<div class="epg-day-placeholder is-empty" style="left:${dayStartPx}px; width:${dayWidth}px;">${emptyMsg}</div>`;
+              progsHtml += `<div class="epg-day-placeholder is-empty" style="left:${dayStartPx}px; width:${dayWidth}px;"><span>${emptyMsg}</span></div>`;
             } else {
               progsHtml += progs
                 .map((p) => {
                   const pStart = Math.max(0, p.startMin);
-                  const pEnd = Math.min(1440, Math.max(pStart + 5, p.endMin));
+                  const pEnd = Math.max(pStart + 5, p.endMin);
                   const left = dayStartPx + (pStart * PIXELS_PER_MIN);
                   const width = Math.max((pEnd - pStart) * PIXELS_PER_MIN - 3, 40);
                   const isToday = d === 0;
@@ -1289,22 +1384,16 @@
     if (state.timeMachineDate) {
       exitTimeMachine();
     }
-    let needsRender = false;
     if (targetDay > epgContinuous.endDay) {
       epgContinuous.endDay = Math.min(epgContinuous.maxDay, targetDay + 1);
-      needsRender = true;
     }
     if (targetDay < epgContinuous.startDay) {
       epgContinuous.startDay = Math.max(-7, targetDay);
-      needsRender = true;
     }
 
     state.dayOffset = targetDay;
     renderDateStrip();
-
-    if (needsRender) {
-      renderEPG(true);
-    }
+    renderEPG(true);
 
     requestAnimationFrame(() => {
       const dayIndex = targetDay - epgContinuous.startDay;
@@ -1343,6 +1432,9 @@
         if (activeBtn && activeBtn.scrollIntoView) {
           activeBtn.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
         }
+        const platformChannels = getFilteredChannels("All");
+        const toFetch = state.epgCategory === "Favorites" ? getFilteredChannels("Favorites") : platformChannels;
+        enqueueDayScheduleFetch(toFetch, activeDay);
       }
 
       // Auto-extend timeline when scrolling near right edge
